@@ -25,7 +25,9 @@ from .dbutil import (
     coord_conv,
 )
 
-from .dbsearch import *
+from .dbsearch import (
+    read_database,
+)
 
 domain_field_set_separator = ','
 domain_field_separator = ':'
