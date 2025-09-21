@@ -1,4 +1,4 @@
-import logging 
+import logging
 import sys
 import os
 import ast
@@ -8,7 +8,7 @@ logger = logging.getLogger(__name__)
 def parse_output_format(format_str: str, expected_str: str):
     wanted_fields = format_str.split(',')
     expected_fields = expected_str.split(',')
-    
+
     if not wanted_fields:
         logger.error("No fields found in the provided format string.")
         sys.exit(1)
@@ -17,7 +17,7 @@ def parse_output_format(format_str: str, expected_str: str):
         if field not in expected_fields:
             logger.warning(f"Format option '{field}' is not recognized.")
             sys.exit(1)
-            
+
     return wanted_fields
 
 def check_for_database(db_name):
@@ -29,7 +29,7 @@ def check_for_database(db_name):
         if not os.path.exists(db_name + '.pt'):
             logger.error(f"Cannot find database file {db_name + '.pt'}")
             sys.exit(1)
-            
+
         if not os.path.exists(db_name + '.index'):
             logger.error(f"Cannot find database file {db_name + '.index'}")
             sys.exit(1)
@@ -52,12 +52,12 @@ def write_search_results(results: list[dict], output_file: str, format_list: str
                     else:
                         head_str='\t'.join(ast.literal_eval(result['metadata']).keys())
                         return head_str
-        
-    
+
+
     with open(output_file, 'w+') as fn:
-        if header: 
+        if header:
             head_str=''
-            for option in format_list:    
+            for option in format_list:
                 if option == 'query':
                     head_str+='query\t'
                 elif option == 'target':
@@ -138,9 +138,9 @@ def write_search_results(results: list[dict], output_file: str, format_list: str
                             formatted_output.append("{}".format(match['metadata']))
                     else:
                         logger.warning(f"Format option '{option}' is not recognized.")
-                        sys.exit(1)  
+                        sys.exit(1)
                 fn.write('\t'.join(formatted_output) + '\n')
-    
+
     if metadata_json and len(results) > 0:
         import json
         # first check if the db even has metadata to output
@@ -157,15 +157,15 @@ def write_search_results(results: list[dict], output_file: str, format_list: str
     # else:
     #     logger.info('Skipping metadata JSON output.')
 
-                
-def write_segment_results(results: list[dict], output_file: str, header: bool):
-    
+
+def  write_segment_results(results: list[dict], output_file: str, header: bool):
+
     with open(output_file, 'w+') as fn:
         if header:
-            fn.write('filename\tnres\tnres_dom\tnres_ndr\tndom\tpIoU\truntime\tresult\n')    
+            fn.write('filename\tnres\tnres_dom\tnres_ndr\tndom\tpIoU\truntime\tresult\n')
         for res in results:
             fn.write("{}\t{}\t{}\t{}\t{}\t{:.4f}\t{:.4f}\t{}\n".format(
-                os.path.basename(res['name']).replace('.pdb', ''),
+                os.path.splitext(res['name'])[0],
                 int(res['length']),
                 int(res['nres_domain']),
                 int(res['nres_non_domain']),
@@ -180,6 +180,6 @@ def write_all_dom_search_results(results: list[tuple], output_file:str, header:b
     if results is not None:
         with open(output_file, 'w+') as fn:
             if header:
-                fn.write('query_chain\tnqd\thit_chain\tnhd\tmatch_category\tmatch_info\thit_metadata\n')    
+                fn.write('query_chain\tnqd\thit_chain\tnhd\tmatch_category\tmatch_info\thit_metadata\n')
             for res in results:
                 fn.write("\t".join([str(a) for a in res])+'\n')

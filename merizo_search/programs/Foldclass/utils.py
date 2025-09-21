@@ -3,6 +3,7 @@ import re
 import uuid
 import logging
 import subprocess
+from multiprocessing import Pool, cpu_count
 
 import numpy as np
 
@@ -58,16 +59,20 @@ def read_pdb(pdbfile: str, pdb_chain: str="A"):# -> dict[str, Any]
     with open(pdbfile, 'r') as fn:
         coords, seq = [], []
         for line in fn:
-            if line[21] == pdb_chain:
-                if line[:4] == 'ATOM' and line[12:16] == ' CA ':
+            if line[:5] == 'MODEL':
+                logger.warning(f'Input PDB file {pdbfile} has MODEL records; only reading the first one.')
+            if line[:4] == 'ATOM' and line[12:16] == ' CA ':
+                if line[21] == pdb_chain:
                     pdb_fields = [line[:6], line[6:11], line[12:16], line[17:20], line[21], line[22:26], line[30:38], line[38:46], line[46:54]]
                     coords.append(np.array([float(pdb_fields[6]), float(pdb_fields[7]), float(pdb_fields[8])]))
                     seq.append(three_to_single_aa.get(pdb_fields[3], 'X'))
+            if line[:6] == 'ENDMDL':
+                break
 
     coords = np.asarray(coords, dtype=np.float32) #[:2000]
     sequence = ''.join(seq)
     if len(seq) == 0:
-        logger.error("Chain ID '%s' not present in PDB file %s." % (pdb_chain, pdbfile))
+        logger.error("Chain ID '%s' not read from PDB file %s." % (pdb_chain, pdbfile))
         exit(128)
     return {'coords': coords, 'seq': sequence, 'name': pdbfile}
 
@@ -156,3 +161,103 @@ def extract_tmalign_values(tmalign_output: str, return_alignment: bool = False):
         result['alignment'] = alignment_lines
 
     return result
+
+
+def run_tmalign2(args):
+    """Wrapper function for run_tmalign, for use with Pool.map().
+
+    Args:
+        args (iterable): Positional arguments to run_tmalign().
+
+    Returns:
+        (str): Output of run_tmalign().
+    """
+    x, y, options, keep_pdbs = args
+    return run_tmalign(x, y, options, keep_pdbs)
+
+
+def pairwise_parallel_fill_tmalign_array(qfnames: list[str],
+                                tfnames: list[str],
+                                ncpu: int = -1,
+                                mintm: float = 0.5,
+                                options: str = None,
+                                keep_pdbs: bool = True
+                                ):
+    """Multi-thread TM-align runs to fill a pairwise query-target matrix of
+        TM-align scores.
+
+    Args:
+        qfnames (list[str]): Query PDB filenames
+        tfnames (list[str]): Target PDB filename
+        ncpu (int, optional): Number of parallel processes. Defaults to -1.
+        mintm (float, optional): TM-align scores <= mintm are set to zero.
+            Defaults to 0.5.
+        options (str, optional): options for TM-align. Defaults to None.
+        keep_pdbs (bool, optional): Whether to keep the PDB files after
+            alignment. Defaults to True.
+        pairwise_q_t (bool, optional): Whether all possible pairs of `qfnames`
+            and `tfnames` should be used for alignment. If False, `qfnames` and
+            `tfnames` should have the same length
+
+    Returns:
+        np.array[float], shape:(len(qfnames), len(tfnames)): Pairwise TM-align
+            scores. NB: only max(qTM, tTM) is returned.
+    """
+    nrow = len(qfnames)
+    ncol = len(tfnames)
+
+    if ncpu <= 0:  # wiseguy eh
+        ncpu = min(nrow*ncol, cpu_count())
+
+    # Create lists of all (i, j) combinations
+    tm_args = [(qfname, tfname, options, keep_pdbs) for \
+                qfname in qfnames for tfname in tfnames]
+
+    with Pool(ncpu) as pool:
+        results = pool.map(run_tmalign2, tm_args)
+
+    tmalign_scores = [max(d['qtm'], d['ttm']) for d in results]
+    tmalign_scores = np.asarray(tmalign_scores).reshape((nrow, ncol))
+
+    tmalign_scores[tmalign_scores < mintm] = 0.0
+
+    return tmalign_scores
+
+
+def parallel_fill_tmalign_array(qfnames: list[str],
+                                tfnames: list[str],
+                                ncpu: int = -1,
+                                options: str = None,
+                                keep_pdbs: bool = True
+                                ):
+    """Multi-thread TM-align runs to create a pairwise query-target table of
+        TM-align scores.
+
+    Args:
+        qfnames (list[str]): Query PDB filenames
+        tfnames (list[str]): Target PDB filename
+        ncpu (int, optional): Number of parallel processes. Defaults to -1.
+        mintm (float, optional): TM-align scores <= mintm are set to zero.
+            Defaults to 0.5.
+        options (str, optional): options for TM-align. Defaults to None.
+        keep_pdbs (bool, optional): Whether to keep the PDB files after
+            alignment. Defaults to True.
+
+    Returns:
+        results (list[dict]): result dicts from run_tmalign
+    """
+    nrow = len(qfnames)
+    ncol = len(tfnames)
+
+    if ncpu <= 0:  # wiseguy eh
+        ncpu = min(nrow*ncol, cpu_count())
+
+    # check that qfnames and tfnames have same length
+    assert nrow == ncol
+    tm_args = [(qfname, tfname, options, keep_pdbs) for \
+                (qfname, tfname) in zip(qfnames, tfnames)]
+
+    with Pool(ncpu) as pool:
+        results = pool.map(run_tmalign2, tm_args)
+
+    return results

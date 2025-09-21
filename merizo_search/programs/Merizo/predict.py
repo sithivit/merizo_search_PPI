@@ -46,7 +46,7 @@ def iterative_segmentation(network: torch.nn.Module, features: dict, max_iterati
     n_iterations = 0
     iterate = True
     ignore_index = []
-    
+
     domain_ids, conf_res = features['domain_ids'], features['conf_res']
 
     while iterate:
@@ -139,7 +139,7 @@ def read_split_weight_files(directory: str) -> dict:
 
     return weights
 
-def segment(pdb_path: str, network: torch.nn.Module, device: str, length_conditional_iterate: bool, iterate: bool, 
+def segment(pdb_path: str, network: torch.nn.Module, device: str, length_conditional_iterate: bool, iterate: bool,
             max_iterations: int, shuffle_indices: bool, min_domain_size: int = 50, min_fragment_size: int = 10,
             domain_ave_size: int = 200, conf_threshold: float = 0.5,  pdb_chain: str="A",
     ) -> dict:
@@ -159,7 +159,7 @@ def segment(pdb_path: str, network: torch.nn.Module, device: str, length_conditi
         dict: A dictionary containing segmented features.
     """
     features = generate_features_domain(pdb_path, device, pdb_chain)
-    
+
     if length_conditional_iterate and features['nres'] > 512:
         iterate = True
 
@@ -169,34 +169,34 @@ def segment(pdb_path: str, network: torch.nn.Module, device: str, length_conditi
     if iterate:
         if features['nres'] > domain_ave_size * 2:
             features['domain_ids'], features['conf_res'] = iterative_segmentation(
-                network=network, 
-                features=features, 
-                max_iterations=max_iterations, 
-                domain_ave_size=domain_ave_size, 
+                network=network,
+                features=features,
+                max_iterations=max_iterations,
+                domain_ave_size=domain_ave_size,
                 conf_threshold=conf_threshold
             )
-            
+
     features['domain_map'] = instance_matrix(features['domain_ids'])[0]
     features['domain_ids'] = separate_components(features)
 
     if len(torch.unique(features['domain_ids'])) > 1:
         features['domain_ids'] = clean_domains(features['domain_ids'], min_domain_size)
         features['domain_ids'] = clean_singletons(features['domain_ids'], min_fragment_size)
-        
+
     # Recompute the domain map given the new assignment
     features['domain_map'] = instance_matrix(features['domain_ids'])[0]
-    
+
     features['conf_global'] = features['conf_res'].mean()
     features['ndom'] = get_ids(features['domain_ids'])[1]
-    
+
     if shuffle_indices:
         features['domain_ids'] = shuffle_ids(features['domain_ids'])
     else:
         features['domain_ids'] = remap_ids(features['domain_ids'])
-        
+
     return features
 
-def generate_outputs(name_dict: Dict[str, str], features: Dict[str, any], output_dir: str, conf_filter: float=None, plddt_filter: float=None, 
+def generate_outputs(name_dict: Dict[str, str], features: Dict[str, any], output_dir: str, conf_filter: float=None, plddt_filter: float=None,
     save_pdb: bool=False, save_domains: bool=False, save_fasta: bool=False, save_pdf: bool=False, return_indices: bool=False,
     return_domains_as_list: bool=False) -> None:
     """
@@ -217,10 +217,10 @@ def generate_outputs(name_dict: Dict[str, str], features: Dict[str, any], output
         domains = write_pdb_predictions(
             features=features,
             output_dir=output_dir,
-            name_dict=name_dict, 
-            save_domains=save_domains, 
-            conf_filter=conf_filter, 
-            plddt_filter=plddt_filter, 
+            name_dict=name_dict,
+            save_domains=save_domains,
+            conf_filter=conf_filter,
+            plddt_filter=plddt_filter,
             return_domains_as_list=return_domains_as_list
         )
 
@@ -232,7 +232,7 @@ def generate_outputs(name_dict: Dict[str, str], features: Dict[str, any], output
 
     if save_pdf:
         write_pdf_predictions(features, name_dict, output_dir=output_dir)
-        
+
     return domains
 
 def print_summary(features: Dict[str, any], name_dict: Dict[str, str], start_time: float) -> None:
@@ -245,14 +245,14 @@ def print_summary(features: Dict[str, any], name_dict: Dict[str, str], start_tim
         start_time (float): The starting time of the process.
     """
     dom_str = format_dom_str(features['domain_ids'], features['ri'])
-    
+
     nres_domain = features['domain_ids'].count_nonzero()
     nres_ndomain = features['nres'] - nres_domain
-    
+
     end_time = time.time() - start_time
-    
+
     return {
-        'name': name_dict['pdb_name'],
+        'name': os.path.splitext(name_dict['pdb_name'])[0] + '_' + name_dict['pdb_chain'],
         'length': features['nres'],
         'nres_domain': nres_domain,
         'nres_non_domain': nres_ndomain,
@@ -262,9 +262,9 @@ def print_summary(features: Dict[str, any], name_dict: Dict[str, str], start_tim
         'dom_str': dom_str,
     }
 
-def run_merizo(input_paths: List[str], device: str = 'cpu', max_iterations: int = 3, return_indices: bool = False, 
-    length_conditional_iterate: bool = False, iterate: bool = False, shuffle_indices: bool = False, 
-    save_pdb: bool = False, save_domains: bool = False, save_fasta: bool = False, save_pdf: bool = False, 
+def run_merizo(input_paths: List[str], device: str = 'cpu', max_iterations: int = 3, return_indices: bool = False,
+    length_conditional_iterate: bool = False, iterate: bool = False, shuffle_indices: bool = False,
+    save_pdb: bool = False, save_domains: bool = False, save_fasta: bool = False, save_pdf: bool = False,
     conf_filter: Optional[any] = None, plddt_filter: Optional[any] = None, min_domain_size: int = 50, min_fragment_size: int = 10,
     domain_ave_size: int = 200, conf_threshold: float = 0.5, return_domains_as_list: bool=False, merizo_output: str=None, pdb_chain: str="A",
     threads: int = 0
@@ -286,12 +286,14 @@ def run_merizo(input_paths: List[str], device: str = 'cpu', max_iterations: int 
         save_pdf (bool): Whether to save PDF files. Defaults to False.
         conf_filter: The confidence filter.
         plddt_filter: The PLDDT filter.
+        pdb_chain (str): Comma-separated characters; the chain ids to use
+        threads (int): The number of threads to use.
     """
-    
+
     if len(input_paths) == 0:
         logging.error("No inputs were provided!")
         sys.exit(1)
-    
+
     if threads > 0:
         torch.set_num_threads(threads)
     device = get_device(device)
@@ -300,14 +302,14 @@ def run_merizo(input_paths: List[str], device: str = 'cpu', max_iterations: int 
     weights_dir = os.path.join(os.path.dirname(__file__), 'weights')
     network.load_state_dict(read_split_weight_files(weights_dir), strict=True)
     network.eval()
-    
+
     if merizo_output is not None:
         if not os.path.exists(merizo_output):
             os.mkdir(merizo_output)
-            
+
     segment_results = []
     print_results = []
-    
+
     pdb_chain = pdb_chain.rstrip(",")
     pdb_chains = pdb_chain.split(",")
 
@@ -319,39 +321,43 @@ def run_merizo(input_paths: List[str], device: str = 'cpu', max_iterations: int 
             sys.exit(1)
 
     with torch.no_grad():
-        for idx, pdb_path in enumerate(input_paths):
+        for pdb_path, chain in zip(input_paths,pdb_chains):
             if os.path.exists(pdb_path):
                 start_time = time.time()
-                
+
                 if merizo_output is None:
                     merizo_output = os.getcwd()
-                   # merizo_output = os.path.dirname(pdb_path)
+                    # merizo_output = os.path.dirname(pdb_path)
 
                 pdb_name = os.path.basename(pdb_path)
                 pdb_bn, _ = os.path.splitext(pdb_name)
-                pdb_out = pdb_bn + "_merizo"
-                
-                name_dict = {'pdb_name': pdb_name, 'pdb_path': pdb_path, 'pdb_bn': pdb_bn, 'pdb_out': pdb_out}
+                pdb_out = pdb_bn + "_" + chain + "_merizo"
+
+                name_dict = {'pdb_name': pdb_name, 'pdb_path': pdb_path,
+                             'pdb_bn': pdb_bn, 'pdb_out': pdb_out,
+                             'pdb_chain': chain}
 
                 if not os.path.exists(name_dict['pdb_out']):
-                    features = segment(pdb_path=pdb_path, network=network, device=device, 
-                        length_conditional_iterate=length_conditional_iterate, iterate=iterate, 
+                    features = segment(pdb_path=pdb_path, network=network, device=device,
+                        length_conditional_iterate=length_conditional_iterate, iterate=iterate,
                         max_iterations=max_iterations, shuffle_indices=shuffle_indices,
-                        min_domain_size=min_domain_size, min_fragment_size=min_fragment_size, 
-                        domain_ave_size=domain_ave_size, conf_threshold=conf_threshold, pdb_chain=pdb_chains[idx]
+                        min_domain_size=min_domain_size, min_fragment_size=min_fragment_size,
+                        domain_ave_size=domain_ave_size, conf_threshold=conf_threshold, pdb_chain=chain
                         )
-                    
-                    domains = generate_outputs(name_dict=name_dict, features=features, conf_filter=conf_filter, 
+
+                    domains = generate_outputs(name_dict=name_dict, features=features, conf_filter=conf_filter,
                         plddt_filter=plddt_filter, save_pdb=save_pdb, save_domains=save_domains,
                         save_fasta=save_fasta, save_pdf=save_pdf, return_indices=return_indices,
                         return_domains_as_list=return_domains_as_list, output_dir=merizo_output,
                         )
-                    
+
                     results = print_summary(features=features, name_dict=name_dict, start_time=start_time)
-                    
+
                     segment_results.extend(domains)
                     print_results.append(results)
-            
+                else:
+                    print(name_dict['pdb_out'], "exists!")
+
     return segment_results, print_results
 
 
@@ -362,12 +368,12 @@ if __name__ == "__main__":
         epilog=textwrap.dedent('''\
             If you use Merizo, please cite the following paper:
                 Lau, et al., 2023. Merizo: a rapid and accurate domain segmentation method using invariant point attention. bioRxiv, doi: https://doi.org/10.1101/2023.02.19.529114
-            
+
             Example usage:
                 python predict.py -d cpu -i examples/2xdqA.pdb
                 python predict.py -d cpu -i examples/*.pdb --save_domains --save_pdf --save_fasta
                 python predict.py -d cpu -i examples/2xdqA.pdb --save_domains --plddt_filter
-                
+
             For AlphaFold2 models, the iterative segmentation routine may give better results on longer models:
                 python predict.py -d cpu -i examples/AF-Q96PD2-F1-model_v4.pdb --iterate --plddt_filter 60 --conf_filter 0.75
          ''')
@@ -391,22 +397,22 @@ if __name__ == "__main__":
     parser.add_argument("--conf_threshold", dest="conf_threshold", type=float, default=0.5, help="[For iteration mode] Controls the minimum confidence to accept for iteration move.")
     parser.add_argument("--pdb_chain", type=str, dest="pdb_chain", default="A", help="Select which PDB Chain you are analysing. Defaut is chain A. You can provide a comma separated list if you can provide more than one input pdb")
     parser.add_argument('-t', '--threads', type=int, default=-1, required=False, help="Number of CPU threads to use.")
-    
+
     args = parser.parse_args()
-    
+
     run_merizo(
-        input_paths=args.input, 
-        device=args.device, 
-        max_iterations=args.max_iterations, 
-        return_indices=args.return_indices, 
-        length_conditional_iterate=args.length_conditional_iterate, 
-        iterate=args.iterate, 
-        shuffle_indices=args.shuffle_indices, 
+        input_paths=args.input,
+        device=args.device,
+        max_iterations=args.max_iterations,
+        return_indices=args.return_indices,
+        length_conditional_iterate=args.length_conditional_iterate,
+        iterate=args.iterate,
+        shuffle_indices=args.shuffle_indices,
         save_pdb=args.save_pdb,
-        save_domains=args.save_domains, 
+        save_domains=args.save_domains,
         save_fasta=args.save_fasta,
-        save_pdf=args.save_pdf, 
-        conf_filter=args.conf_filter, 
+        save_pdf=args.save_pdf,
+        conf_filter=args.conf_filter,
         plddt_filter=args.plddt_filter,
         min_domain_size=args.min_domain_size,
         min_fragment_size=args.min_fragment_size,

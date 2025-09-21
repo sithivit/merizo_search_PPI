@@ -47,7 +47,7 @@ def get_device(device: str) -> torch.device:
 
 
 def get_ids(x: torch.tensor) -> tuple[torch.tensor, int]:
-    """ Returns a tuple containing unique non-zero indices and 
+    """ Returns a tuple containing unique non-zero indices and
         the number of unique non-zero indices.
 
     Args:
@@ -55,7 +55,7 @@ def get_ids(x: torch.tensor) -> tuple[torch.tensor, int]:
 
     Returns:
         tuple[torch.tensor, int]:   Tuple of unique non-zero
-                                    domain indices and number of 
+                                    domain indices and number of
                                     such indices
     """
 
@@ -88,7 +88,7 @@ def remap_ids(x):
 
 def shuffle_ids(domain_ids: torch.tensor) -> torch.tensor:
     """ Remap domain indices to increase contrast between
-        domains in PyMOL. 
+        domains in PyMOL.
 
     Args:
         domain_ids (torch.tensor): [N] domain indices [0, ndoms]
@@ -182,7 +182,7 @@ def clean_domains(dom_ids: torch.tensor, min_num: int) -> torch.tensor:
 
 
 def assimilate_short_terminal(dom_ids, dom_counts, threshold, termini):
-    """ Assimilates any short stretches of residues the N or C terminus into the 
+    """ Assimilates any short stretches of residues the N or C terminus into the
     proceeding/preceeding domain.
     """
     if termini == 'C':
@@ -275,21 +275,21 @@ def clean_singletons(dom_ids: torch.tensor, threshold: int) -> torch.tensor:
 
 def separate_components(feature_dict: dict, distance: float = 8.0) -> torch.tensor:
     """ Separates domains in the domain map based on a minimum distance.
-        Takes the intersect between the domain map and distance map 
+        Takes the intersect between the domain map and distance map
         graphs to disconnect discontinuous associations between segments
-        when the distance (Angstroms) between them is greater then 
-        <distance>. 
+        when the distance (Angstroms) between them is greater then
+        <distance>.
 
     Args:
         domain_map (torch.tensor):  [N,N]   domain map [0,1]
         z (torch.tensor):           [N,N,1] distance map [0,inf]
         domain_ids (torch.tensor):  [N]     domain indices [0, ndom]
-        distance (float, optional):         distance cutoff in Angstroms    
+        distance (float, optional):         distance cutoff in Angstroms
 
     Returns:
         torch.tensor:               [N]     updated domain indices [0, ndom]
     """
-    
+
     domain_map, z, domain_ids = feature_dict['domain_map'], feature_dict['z'],  feature_dict['domain_ids']
 
     # Re-assign indices based on distance cut off between domains
@@ -336,12 +336,15 @@ def write_pdf_predictions(features: dict, name_dict: str, output_dir: str):
         title (torc)
         outname (str): _description_
     """
-    
+
     domain_map = features['domain_map']
     confidence_map = torch.sqrt(features['conf_res'][None, :] * features['conf_res'][:, None])
     confidence_map = confidence_map * domain_map
 
-    title = "{} | {} predicted domains".format(name_dict['pdb_name'], features['ndom'])
+    title = "{}_{} | {} predicted domains".format(name_dict['pdb_name'],
+                                                  name_dict['pdb_chain'],
+                                                  features['ndom']
+                                                  )
 
     hc = ["#e6e6f3", "#cccce6", "#9999cc", "#6666b3", "#33339a", "#000080"]
     th = [0.0, 0.2, 0.4, 0.6, 0.8, 1.0]
@@ -377,7 +380,7 @@ def write_pdb_predictions(
 ):
     """_summary_
 
-    Re-writes occ with domain ids, b-factors remain b-factors or AF2 plDDT. Confidence 
+    Re-writes occ with domain ids, b-factors remain b-factors or AF2 plDDT. Confidence
     estimates are in new 'conf' field.
 
     Args:
@@ -390,7 +393,7 @@ def write_pdb_predictions(
         outname (str): _description_
         comment (list, optional): _description_. Defaults to None.
     """
-    
+
     pdb, dom_ids, conf, ri = features['pdb'], features['domain_ids'], features['conf_res'], features['ri']
     outname = os.path.join(output_dir, name_dict['pdb_out'])
 
@@ -416,29 +419,29 @@ def write_pdb_predictions(
 
                 p = pdb[pdb['occ'] == u.item()]
                 p_ca = select_from_mol([p], 'n', ['CA'])[0]
-                
+
                 dom_str = format_dom_str(
                         torch.tensor(p_ca['occ']),
                         torch.tensor(p_ca['resi']).unsqueeze(0)
                     )
-                
+
                 dom_conf = np.mean(p_ca['conf'])
                 dom_plddt = np.mean(p_ca['b'])
-                
+
                 #if return_domains_as_list: # SMK removed redundant check
                 p_seq = ''.join([resndict[aa] for aa in p_ca['resn']])
-                
+
                 domains.append(
                     {
-                        'coords': get_xyz(p_ca, gaps=False).T.astype(np.float32), 
-                        'seq': p_seq, 
+                        'coords': get_xyz(p_ca, gaps=False).T.astype(np.float32),
+                        'seq': p_seq,
                         'name': out_dom,
                         'dom_str': dom_str,
                         'dom_conf': dom_conf,
                         'dom_plddt': dom_plddt,
                     }
                 )
-                    
+
                 if save_domains:
                     if conf_filter is not None and plddt_filter is None:
                         if dom_conf >= conf_filter:
@@ -461,7 +464,7 @@ def write_pdb_predictions(
                             logging.warning(domfname+' exists, will be overwritten!')
                             os.remove(domfname)
                             overwriteflag=False
-                            
+
                         with open(domfname, 'a') as fn:
                             fn.write("{}\t{:.0f}\t{}\t{:.3f}\t{:.3f}\t{:.0f}\t{}\n".format(
                                 name, i + 1, len(p_ca), dom_conf, dom_plddt, u.item(), dom_str))
@@ -470,7 +473,7 @@ def write_pdb_predictions(
 
     if save_domains:
         write_pdb(pdb, outname + ".pdb2", comment)
-    
+
     if return_domains_as_list:
         return domains
 
@@ -486,7 +489,8 @@ def write_fasta(pdb: np.ndarray, name_dict: dict, output_dir: str):
     fasta = pdb_to_fasta(pdb)
 
     with open(os.path.join(output_dir, name_dict['pdb_out'] + ".fasta"), "w") as f:
-        f.write(">" + os.path.basename(name_dict['pdb_name']) + "\n")
+        f.write(">" + os.path.basename(name_dict['pdb_name']) +
+                "_" + name_dict['pdb_chain'] + "\n")
         f.write(fasta + "\n")
 
 
