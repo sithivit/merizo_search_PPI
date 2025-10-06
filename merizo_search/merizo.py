@@ -36,7 +36,7 @@ def segment(args):
     parser.add_argument("input", type=str, nargs="+", help="Specify path to pdb file input. Can also take multiple inputs (e.g. '/path/to/file.pdb' or '/path/to/*.pdb').")
     parser.add_argument("output", type=str, help="Output file prefix to write segment results to. Results will be called _segment.tsv.")
     parser.add_argument("-d", "--device", type=str, default="cpu", help="Hardware to run on. Options: 'cpu', 'cuda', 'mps'.")
-    parser.add_argument("--merizo_output", type=str, default=os.environ['PWD'], help="Designate where to save the merizo outputs to.")
+    parser.add_argument("--merizo_output", type=str, default=os.getcwd(), help="Designate where to save the merizo outputs to.")
     parser.add_argument("--save_pdf", action="store_true", default=False, help="Include to save the domain map as a pdf.")
     parser.add_argument("--save_pdb", action="store_true", default=False,
                         help="Include to save the result as a pdb file. All domains will be included unless --conf_filter or --plddt_filter is used.")
@@ -262,7 +262,7 @@ def easy_search(args):
     parser.add_argument("--metadata_json", action="store_true", default=False, help="Output metadata for hits in JSON format.")
 
     # Merizo options
-    parser.add_argument("--merizo_output", type=str, default=os.environ['PWD'], help="Designate where to save the merizo outputs to.")
+    parser.add_argument("--merizo_output", type=str, default=os.getcwd(), help="Designate where to save the merizo outputs to.")
     parser.add_argument("--save_pdf", action="store_true", default=False, help="Include to save the domain map as a pdf.")
     parser.add_argument("--save_pdb", action="store_true", default=False,
                         help="Include to save the result as a pdb file. All domains will be included unless --conf_filter and/or --plddt_filter are used.")
