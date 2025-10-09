@@ -430,6 +430,9 @@ def rosetta(args):
     build_parser.add_argument('output', type=str, help='Output directory for fusion database')
     build_parser.add_argument('--min-domains', type=int, default=2,
                              help='Minimum domains per protein')
+    build_parser.add_argument('--max-protein-size', type=int, default=1800,
+                             help='Maximum protein size (residues) to prevent OOM. '
+                                  'Default 1800 is safe for 6GB GPU. Increase for larger GPUs.')
     build_parser.add_argument('-d', '--device', type=str, default='cuda',
                              help='Device (cpu, cuda, mps)')
     build_parser.add_argument('--skip-promiscuity', action='store_true',
@@ -495,6 +498,7 @@ def build_fusion_database(args):
     builder = FusionDatabaseBuilder(
         output_dir=Path(args.output),
         min_domains_per_protein=args.min_domains,
+        max_protein_size=args.max_protein_size,
         device=args.device
     )
 

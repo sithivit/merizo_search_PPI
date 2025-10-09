@@ -19,6 +19,26 @@
 
 ---
 
+## Version History & API Corrections
+
+**Current Version**: 3.0 (Merged - October 2025)
+
+This implementation guide incorporates corrections from earlier versions and represents the complete, tested implementation:
+
+### Key API Corrections (from v2.0)
+1. **Merizo API**: Uses correct `Merizo()` network class and `segment()` function
+2. **Foldclass API**: Uses `FoldClassNet(128)` (not non-existent `Foldclass` class)
+3. **Database Format**: Follows existing `.pt`/`.index` pattern
+4. **Integration**: Adds as new mode to `merizo.py` CLI
+5. **Dependencies**: Accurately lists required new packages
+
+### Implementation History
+- **v1.0** (Oct 6): Initial implementation planning
+- **v2.0** (Oct 7): Corrected APIs and data structures
+- **v3.0** (Oct 9): Complete implementation with GPU memory fixes, testing, and documentation
+
+---
+
 ## System Overview
 
 ### Core Concept: Rosetta Stone Method
@@ -314,6 +334,12 @@ class Domain:
     embedding: np.ndarray             # Foldclass embedding [128]
     cluster_id: Optional[int] = None  # Structural cluster assignment
     confidence: Optional[float] = None # Merizo confidence score
+
+    def __post_init__(self):
+        """Validate data integrity"""
+        assert self.embedding.shape == (128,), f"Invalid embedding shape: {self.embedding.shape}"
+        assert self.residue_range[0] <= self.residue_range[1], "Invalid residue range"
+        assert len(self.ca_coordinates) == len(self.sequence), "Coords/sequence length mismatch"
 
     @property
     def length(self) -> int:

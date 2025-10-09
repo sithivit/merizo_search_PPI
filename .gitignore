@@ -23,9 +23,8 @@ utils/
 
 CLAUDE.md
 extract_pdbs.py
-delete_gz_files.py
-QUICKSTART_ROSETTA.md
+remove_cif_files.py
 IMPLEMENTATION.md
-human/
-test_fusion_db/
+ecoli_fusion_db/
 .claude/
+EColi/

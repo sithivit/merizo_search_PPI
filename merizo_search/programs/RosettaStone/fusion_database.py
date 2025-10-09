@@ -37,7 +37,8 @@ class FusionDatabaseBuilder:
         min_domains_per_protein: int = 2,
         min_linker_length: int = 0,
         max_linker_length: int = 100,
-        device: str = 'cuda'
+        device: str = 'cuda',
+        max_protein_size: int = 1800
     ):
         """Initialize the fusion database builder
 
@@ -47,6 +48,7 @@ class FusionDatabaseBuilder:
             min_linker_length: Minimum linker length between domains
             max_linker_length: Maximum linker length between domains
             device: Device for neural network inference ('cuda', 'cpu', 'mps')
+            max_protein_size: Maximum protein size (residues) to prevent OOM on small GPUs
         """
         self.output_dir = Path(output_dir)
         self.output_dir.mkdir(parents=True, exist_ok=True)
@@ -54,6 +56,7 @@ class FusionDatabaseBuilder:
         self.min_domains = min_domains_per_protein
         self.min_linker = min_linker_length
         self.max_linker = max_linker_length
+        self.max_protein_size = max_protein_size
         self.device = get_device(device)
 
         # Set PyTorch memory allocator to avoid fragmentation
@@ -118,6 +121,19 @@ class FusionDatabaseBuilder:
         # Process structures
         for pdb_idx, pdb_path in enumerate(tqdm(structure_paths, desc="Processing structures")):
             try:
+                # CRITICAL: Check protein size BEFORE segmentation to avoid OOM on large proteins
+                # The IPA attention mechanism has O(N²) memory requirements
+                # For 6GB GPU, proteins > 1800 residues often cause OOM
+                num_residues = self._count_protein_residues(pdb_path)
+                if num_residues > self.max_protein_size:
+                    logger.warning(
+                        f"SKIPPING {pdb_path.name}: {num_residues} residues (> {self.max_protein_size} limit). "
+                        f"Protein too large for GPU. IPA attention would require ~{(num_residues/1000)**2 * 2:.1f} GB."
+                    )
+                    continue
+                elif num_residues > int(self.max_protein_size * 0.67):  # Warn at 67% of limit
+                    logger.info(f"{pdb_path.name} has {num_residues} residues (large - may be slow)")
+
                 # Log GPU memory before segmentation
                 if torch.cuda.is_available():
                     mem_allocated = torch.cuda.memory_allocated() / 1e9
@@ -244,6 +260,60 @@ class FusionDatabaseBuilder:
                 pickle.dump(fusion_metadata_list, f)
             logger.info(f"Saved {len(fusion_metadata_list)} fusion link entries")
 
+        # Build domain registry (domain_id -> Domain object mapping)
+        logger.info("Building domain registry...")
+        domain_registry = {}
+        for domain_id, ca_coords, sequence, embedding in domain_metadata_list:
+            # Parse protein_id from domain_id (format: "protein_domain_N")
+            parts = domain_id.rsplit('_domain_', 1)
+            protein_id = parts[0] if len(parts) == 2 else domain_id
+
+            # Create Domain object
+            domain = Domain(
+                domain_id=domain_id,
+                protein_id=protein_id,
+                chain_id='A',
+                residue_range=(0, len(ca_coords)),  # Approximate, exact range in metadata
+                residue_indices=np.arange(len(ca_coords)),
+                ca_coordinates=ca_coords,
+                sequence=sequence,
+                embedding=embedding,
+                confidence=1.0
+            )
+            domain_registry[domain_id] = domain
+
+        registry_path = self.output_dir / 'domain_registry.pkl'
+        with open(registry_path, 'wb') as f:
+            pickle.dump(domain_registry, f)
+        logger.info(f"Saved domain registry with {len(domain_registry)} domains")
+
+        # Build fusion embeddings (concatenated domain pair embeddings)
+        logger.info("Building fusion embeddings...")
+        fusion_embeddings_list = []
+
+        # Create embedding lookup for fast access
+        embedding_lookup = {domain_id: emb for domain_id, _, _, emb in domain_metadata_list}
+
+        for fusion_meta in fusion_metadata_list:
+            domain_A_id = fusion_meta['domain_A_id']
+            domain_B_id = fusion_meta['domain_B_id']
+
+            # Get embeddings from lookup
+            if domain_A_id in embedding_lookup and domain_B_id in embedding_lookup:
+                emb_A = embedding_lookup[domain_A_id]
+                emb_B = embedding_lookup[domain_B_id]
+
+                # Concatenate embeddings [256]
+                fusion_embedding = np.concatenate([emb_A, emb_B])
+                fusion_embeddings_list.append(fusion_embedding)
+            else:
+                logger.warning(f"Missing embeddings for fusion: {domain_A_id} - {domain_B_id}")
+
+        if len(fusion_embeddings_list) > 0:
+            fusion_embeddings_tensor = torch.tensor(np.array(fusion_embeddings_list), dtype=torch.float32)
+            torch.save(fusion_embeddings_tensor, self.fusion_embeddings_path)
+            logger.info(f"Saved fusion embeddings: {fusion_embeddings_tensor.shape}")
+
         logger.info(f"Database built successfully: {domain_count} domains, {fusion_count} fusion links")
 
     def _process_domain_batch(
@@ -315,6 +385,38 @@ class FusionDatabaseBuilder:
                 logger.warning(f"Failed to compute embedding for {domain.domain_id}: {e}")
                 # Skip this domain and continue with others
                 continue
+
+    def _count_protein_residues(self, pdb_path: Path) -> int:
+        """Quickly count the number of residues in a PDB/CIF file
+
+        This is used to filter out very large proteins that would cause OOM
+        on small GPUs (e.g., 6GB).
+
+        Args:
+            pdb_path: Path to PDB/CIF file
+
+        Returns:
+            Number of CA atoms (= number of residues)
+        """
+        try:
+            ca_count = 0
+            with open(pdb_path, 'r') as f:
+                for line in f:
+                    # Check PDB format
+                    if line.startswith('ATOM') and ' CA ' in line:
+                        ca_count += 1
+                    # Check mmCIF format
+                    elif line.startswith('_atom_site.') or line.startswith('ATOM'):
+                        # For CIF, we need to parse more carefully
+                        if pdb_path.suffix == '.cif':
+                            # Simple heuristic: count lines with 'CA' in atom name column
+                            parts = line.split()
+                            if len(parts) > 3 and parts[3] == 'CA':
+                                ca_count += 1
+            return ca_count
+        except Exception as e:
+            logger.warning(f"Failed to count residues in {pdb_path.name}: {e}")
+            return 0
 
     def _segment_protein(self, pdb_path: Path) -> List[Domain]:
         """Segment protein structure into domains using Merizo
@@ -469,6 +571,9 @@ if __name__ == '__main__':
     parser.add_argument('-i', '--input', required=True, help='Directory of PDB files or file list')
     parser.add_argument('-o', '--output', required=True, help='Output directory')
     parser.add_argument('--min-domains', type=int, default=2)
+    parser.add_argument('--max-protein-size', type=int, default=1800,
+                        help='Maximum protein size (residues) to prevent OOM. '
+                             'Default 1800 is safe for 6GB GPU. Increase for larger GPUs.')
     parser.add_argument('--batch-size', type=int, default=4, help='Embedding batch size (reduce to 2 if still OOM)')
     parser.add_argument('-d', '--device', default='cuda')
     args = parser.parse_args()
@@ -485,6 +590,7 @@ if __name__ == '__main__':
     builder = FusionDatabaseBuilder(
         output_dir=Path(args.output),
         min_domains_per_protein=args.min_domains,
+        max_protein_size=args.max_protein_size,
         device=args.device
     )
 
