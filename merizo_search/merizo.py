@@ -413,16 +413,207 @@ def easy_search(args):
     shutil.rmtree(tmp)
 
 
+# Function to handle rosetta mode
+def rosetta(args):
+    """Rosetta Stone search for protein-protein interactions"""
+    parser = argparse.ArgumentParser(
+        description="Rosetta Stone search for protein-protein interactions via domain fusion analysis",
+        formatter_class=argparse.ArgumentDefaultsHelpFormatter
+    )
+
+    # Subcommands
+    subparsers = parser.add_subparsers(dest='rosetta_command', help='Rosetta Stone commands')
+
+    # Build database command
+    build_parser = subparsers.add_parser('build', help='Build fusion database from multi-domain proteins')
+    build_parser.add_argument('input', type=str, help='Directory of PDB files or file list')
+    build_parser.add_argument('output', type=str, help='Output directory for fusion database')
+    build_parser.add_argument('--min-domains', type=int, default=2,
+                             help='Minimum domains per protein')
+    build_parser.add_argument('-d', '--device', type=str, default='cuda',
+                             help='Device (cpu, cuda, mps)')
+    build_parser.add_argument('--skip-promiscuity', action='store_true',
+                             help='Skip promiscuity index building')
+    build_parser.add_argument('--promiscuity-threshold', type=int, default=25,
+                             help='Promiscuity threshold (number of links)')
+    build_parser.add_argument('--batch-size', type=int, default=4,
+                             help='Embedding batch size (reduce to 2 if GPU OOM)')
+
+    # Search command
+    search_parser = subparsers.add_parser('search', help='Search for protein-protein interactions')
+    search_parser.add_argument('query', type=str, help='Query PDB file')
+    search_parser.add_argument('database', type=str, help='Fusion database directory')
+    search_parser.add_argument('output', type=str, help='Output file prefix')
+    search_parser.add_argument('--cosine-threshold', type=float, default=0.7,
+                              help='Cosine similarity threshold')
+    search_parser.add_argument('--top-k', type=int, default=20,
+                              help='Number of top matches to consider')
+    search_parser.add_argument('--validate-tm', action='store_true',
+                              help='Validate with TM-align')
+    search_parser.add_argument('--min-tm-score', type=float, default=0.5,
+                              help='Minimum TM-score threshold')
+    search_parser.add_argument('--fastmode', action='store_true',
+                              help='Use fast TM-align mode')
+    search_parser.add_argument('--skip-filter', action='store_true',
+                              help='Skip promiscuity filtering')
+    search_parser.add_argument('-d', '--device', type=str, default='cuda',
+                              help='Device (cpu, cuda, mps)')
+    search_parser.add_argument('--output-headers', action='store_true',
+                              help='Include headers in output')
+
+    args = parser.parse_args(args)
+
+    if args.rosetta_command == 'build':
+        build_fusion_database(args)
+    elif args.rosetta_command == 'search':
+        search_rosetta_interactions(args)
+    else:
+        parser.print_help()
+
+
+def build_fusion_database(args):
+    """Build fusion database for Rosetta Stone search"""
+    from programs.RosettaStone.fusion_database import FusionDatabaseBuilder
+    from programs.RosettaStone.promiscuity_filter import DomainPromiscuityFilter
+    from pathlib import Path
+
+    logging.info('Starting fusion database build with command: \n\n{}\n'.format(
+        " ".join([f'"{arg}"' if " " in arg else arg for arg in sys.argv])
+    ))
+
+    # Get structure files
+    input_path = Path(args.input)
+    if input_path.is_dir():
+        structure_paths = list(input_path.glob('*.pdb')) + list(input_path.glob('*.cif'))
+    else:
+        with open(input_path) as f:
+            structure_paths = [Path(line.strip()) for line in f]
+
+    start_time = time.time()
+
+    # Build database
+    builder = FusionDatabaseBuilder(
+        output_dir=Path(args.output),
+        min_domains_per_protein=args.min_domains,
+        device=args.device
+    )
+
+    builder.build_from_structure_list(structure_paths, batch_size=args.batch_size)
+
+    # Build promiscuity index
+    if not args.skip_promiscuity:
+        logging.info("Building promiscuity index...")
+        filter_engine = DomainPromiscuityFilter(
+            fusion_db_dir=Path(args.output),
+            promiscuity_threshold=args.promiscuity_threshold
+        )
+        filter_engine.build_promiscuity_index()
+
+        # Print report
+        report = filter_engine.get_promiscuity_report()
+        if report:
+            logging.info("Promiscuity Report:")
+            logging.info(f"  Total clusters: {report['total_clusters']}")
+            logging.info(f"  Promiscuous: {report['promiscuous_clusters']} ({report['promiscuity_rate']*100:.1f}%)")
+            logging.info(f"  Mean links per cluster: {report['mean_links']:.1f}")
+        else:
+            logging.info("Promiscuity Report: No clusters found (dataset too small for clustering)")
+
+    elapsed_time = time.time() - start_time
+    logging.info(f'Finished fusion database build in {elapsed_time:.2f} seconds.')
+
+
+def search_rosetta_interactions(args):
+    """Search for protein-protein interactions using Rosetta Stone method"""
+    from programs.RosettaStone.rosetta_search import StructuralRosettaStoneSearch
+    from programs.RosettaStone.promiscuity_filter import DomainPromiscuityFilter
+    from pathlib import Path
+    import json
+
+    logging.info('Starting Rosetta Stone search with command: \n\n{}\n'.format(
+        " ".join([f'"{arg}"' if " " in arg else arg for arg in sys.argv])
+    ))
+
+    start_time = time.time()
+
+    # Initialize search engine
+    search_engine = StructuralRosettaStoneSearch(
+        fusion_db_dir=Path(args.database),
+        cosine_threshold=args.cosine_threshold,
+        top_k=args.top_k,
+        device=args.device
+    )
+
+    # Search for interactions
+    predictions = search_engine.search_interactions(
+        query_pdb_path=Path(args.query),
+        validate_tm=args.validate_tm,
+        min_tm_score=args.min_tm_score,
+        fastmode=args.fastmode
+    )
+
+    logging.info(f"Found {len(predictions)} candidate interactions")
+
+    # Apply promiscuity filter
+    if not args.skip_filter:
+        logging.info("Applying promiscuity filter...")
+        filter_engine = DomainPromiscuityFilter(
+            fusion_db_dir=Path(args.database)
+        )
+        filter_engine.load_promiscuity_index(Path(args.database) / 'promiscuity_index.pkl')
+
+        filtered_predictions, removed_predictions = filter_engine.filter_predictions(predictions)
+
+        logging.info(f"After filtering: {len(filtered_predictions)} predictions")
+        logging.info(f"Removed {len(removed_predictions)} promiscuous interactions")
+
+        predictions = filtered_predictions
+
+    # Save results
+    output_path = Path(args.output + '_rosetta.json')
+    output_data = {
+        'query': args.query,
+        'num_predictions': len(predictions),
+        'predictions': [pred.to_output_dict() for pred in predictions]
+    }
+
+    with open(output_path, 'w') as f:
+        json.dump(output_data, f, indent=2)
+
+    logging.info(f"Results saved to {output_path}")
+
+    # Print summary
+    print("\n" + "="*80)
+    print("TOP PREDICTIONS")
+    print("="*80)
+
+    for i, pred in enumerate(predictions[:10], 1):
+        print(f"\n{i}. Confidence: {pred.confidence_score:.3f}")
+        print(f"   Query:  {pred.query_domain.domain_id} (residues {pred.query_domain.residue_range[0]}-{pred.query_domain.residue_range[1]})")
+        print(f"   Target: {pred.target_domain.domain_id} (residues {pred.target_domain.residue_range[0]}-{pred.target_domain.residue_range[1]})")
+        print(f"   Type: {pred.interaction_type}")
+        print(f"   Similarity: {pred.cosine_similarity:.3f}")
+        if pred.tm_score:
+            print(f"   TM-score: {pred.tm_score:.3f}")
+        print(f"   Evidence: {len(pred.rosetta_stone_evidence)} Rosetta Stone(s)")
+        for rs in pred.rosetta_stone_evidence[:2]:
+            print(f"      - {rs.rosetta_stone_id}")
+
+    elapsed_time = time.time() - start_time
+    logging.info(f'Finished Rosetta Stone search in {elapsed_time:.2f} seconds.')
+
+
 # Main function to parse arguments and call respective functions
 def main():
     setup_logging()
     usage = """Usage: python merizo.py <mode> <args>
-    <mode> is one of: 'segment', 'createdb', 'search', or 'easy-search'.
+    <mode> is one of: 'segment', 'createdb', 'search', 'easy-search', or 'rosetta'.
     Detailed help is available for each mode:
         python merizo.py segment --help
         python merizo.py createdb --help
         python merizo.py search --help
         python merizo.py easy-search --help
+        python merizo.py rosetta --help
     """
 
     if len(sys.argv) < 2:
@@ -440,10 +631,12 @@ def main():
         search(args)
     elif mode == "easy-search":
         easy_search(args)
+    elif mode == "rosetta":
+        rosetta(args)
     elif mode == "-h" or mode == "--help":
         print(usage)
     else:
-        print("Invalid mode. Please choose one of 'segment', 'createdb', 'search', or 'easy-search'.")
+        print("Invalid mode. Please choose one of 'segment', 'createdb', 'search', 'easy-search', or 'rosetta'.")
 
 if __name__ == "__main__":
     main()

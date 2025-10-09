@@ -7,3 +7,9 @@ rotary_embedding_torch
 scipy
 setuptools
 torch==2.0.1
+packaging
+faiss-cpu>=1.7.3  # Use faiss-gpu if you have CUDA
+hdbscan>=0.8.27
+scikit-learn>=1.0.0
+h5py>=3.6.0
+tqdm>=4.62.0

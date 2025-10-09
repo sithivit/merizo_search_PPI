@@ -15,4 +15,17 @@ merizo_search.code-workspace
 merizo_search/.vscode/
 tmp*
 utils/
+
+# Compressed structure files
+*.gz
+*.pdb.gz
+*.cif.gz
+
 CLAUDE.md
+extract_pdbs.py
+delete_gz_files.py
+QUICKSTART_ROSETTA.md
+IMPLEMENTATION.md
+human/
+test_fusion_db/
+.claude/
