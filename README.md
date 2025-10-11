@@ -52,6 +52,66 @@ If you're using a virtualenv to install Torch, you may find you need to add the 
 BY DEFAULT we do not download the Merizo-search databases as they are nearly 1TB in size. You can do this manually (see below) or open `install.yml` and uncomment the line `- dataset`
 
 
+## USalign Support
+
+Merizo-search now supports USalign as an alternative to TM-align for structural alignment verification. USalign is a universal structure alignment tool that offers:
+- Support for both protein and nucleic acid structures
+- Additional alignment modes (circular permutation, mirror alignment, etc.)
+- Improved alignment capabilities in some cases
+
+### Installing USalign
+
+1. **Download and compile USalign:**
+```bash
+# Clone the USalign repository
+git clone https://github.com/pylelab/USalign.git
+cd USalign
+
+# Compile USalign
+make
+
+# Copy the binary to merizo_search Foldclass directory
+cp USalign /path/to/merizo_search/merizo_search/programs/Foldclass/
+```
+
+2. **Alternative installation (using conda/homebrew):**
+```bash
+# Using conda
+conda install -c bioconda usalign
+
+# Using homebrew (macOS/Linux)
+brew install brewsci/bio/usalign
+
+# Copy the binary to merizo_search Foldclass directory
+which USalign  # Find the location
+cp $(which USalign) /path/to/merizo_search/merizo_search/programs/Foldclass/
+```
+
+### Using USalign
+
+To use USalign instead of TM-align, add the `--alignment_method usalign` flag to your search or easy-search commands:
+
+```bash
+# Using USalign for search
+python merizo.py search input.pdb database_name output tmp --alignment_method usalign
+
+# Using USalign for easy-search
+python merizo.py easy-search input.pdb database_name output tmp --alignment_method usalign --iterate
+
+# USalign with multi-domain search
+python merizo.py search input1.pdb input2.pdb database_name output tmp \
+    --alignment_method usalign \
+    --multi_domain_search
+```
+
+The default alignment method remains TM-align to maintain backward compatibility. All existing workflows will continue to work without modification.
+
+### When to Use USalign vs TM-align
+
+- **Use TM-align (default)**: For standard protein structure alignments, well-established benchmarks
+- **Use USalign**: When working with RNA/DNA structures, need circular permutation detection, or exploring alternative alignment strategies
+
+
 ## Databases
 We provide pre-built Foldclass databases for domains in CATH 4.3 and all 365 million domains from TED. They can be obtained from [here](https://doi.org/10.5522/04/26348605). We recommend using our convenience script in this repository (`download_dbs.sh`) to download them. 
 If you are using a browser to access the URL above, please make sure you download the individual files in each directory, rather than download each directory as a whole.

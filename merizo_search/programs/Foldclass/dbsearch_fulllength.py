@@ -15,6 +15,7 @@ from .utils import (
     read_pdb,
     write_pdb,
     pairwise_parallel_fill_tmalign_array,
+    pairwise_parallel_fill_alignment_array,
 )
 
 from .dbutil import (
@@ -153,7 +154,8 @@ def multi_domain_search(queries: list,
                         #    search_type = 'IP',
                         inputs_from_easy_search: bool = False,
                         mode: str = "exhaustive_tmalign",
-                        pdb_chain=None
+                        pdb_chain=None,
+                        alignment_method: str = 'tmalign'
                         ):
 
     # Note on format of `queries`:
@@ -516,16 +518,17 @@ def multi_domain_search(queries: list,
             # n_targets_to_align = len(target_fnames)
 
             # parallel version
-            logger.info("Run TM-align for all query-hit combinations, query domains from query chain "+qc+"...")
+            logger.info("Run structural alignment for all query-hit combinations, query domains from query chain "+qc+"...")
             tmscore_mtx = \
-                pairwise_parallel_fill_tmalign_array(
+                pairwise_parallel_fill_alignment_array(
                     qfnames=[initial_hit_index[qc][qd]['qfname'] for
                              qd in initial_hit_index[qc].keys()],
                     tfnames=target_fnames,
+                    method=alignment_method,
                     ncpu=threads,
                     mintm=mintm,
                     options='-fast' if fastmode else None,
-                    keep_pdbs=True  # this is sent to individual TM-align runs
+                    keep_pdbs=True  # this is sent to individual alignment runs
                     )
             # serial version
             """

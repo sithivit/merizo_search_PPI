@@ -114,6 +114,49 @@ def run_tmalign(structure1_path: str, structure2_path: str, options: str = None,
     return extract_tmalign_values(output)
 
 
+def run_usalign(structure1_path: str, structure2_path: str, options: str = None, keep_pdbs=False) -> dict:
+    """
+    Run USalign as a subprocess.
+
+    Args:
+        structure1_path (str): Path to the first structure file.
+        structure2_path (str): Path to the second structure file.
+        options (str, optional): Additional options for USalign.
+        keep_pdbs (bool): Whether to keep PDB files after alignment.
+
+    Returns:
+        dict: Parsed USalign output containing alignment metrics.
+    """
+    usalign_path = os.path.join(SCRIPTDIR, 'USalign')
+
+    # Build command
+    cmd = [usalign_path, structure1_path, structure2_path]
+    if options is not None:
+        # Split options string into list if needed
+        if isinstance(options, str):
+            cmd.extend(options.split())
+        else:
+            cmd.extend(options)
+
+    # Run usalign as a subprocess
+    process = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+    output, error = process.communicate()
+
+    if process.returncode != 0:
+        logger.error(f"Error running USalign: {error}")
+        return {}
+
+    if not keep_pdbs:
+        # Delete structure files
+        try:
+            os.remove(structure1_path)
+            os.remove(structure2_path)
+        except OSError as e:
+            logger.error(f"Error deleting structure files: {e}")
+
+    return extract_usalign_values(output)
+
+
 def extract_tmalign_values(tmalign_output: str, return_alignment: bool = False):
     """
     Parse the output from TMalign.
@@ -163,6 +206,58 @@ def extract_tmalign_values(tmalign_output: str, return_alignment: bool = False):
     return result
 
 
+def extract_usalign_values(usalign_output: str, return_alignment: bool = False):
+    """
+    Parse the output from USalign.
+
+    Args:
+        usalign_output      (str)   USalign output.
+        return_alignment    (bool)  Whether to return the alignment lines (Default: False)
+
+    Returns:
+        dict:
+            len_ali     (int)   Length of the aligned region
+            rmsd        (float) RMSD in angstroms
+            seq_id      (float) sequence identity of the alignment
+            qtm         (float) TM-score normalised by the query length
+            ttm         (float) TM-score normalised by the target length
+            alignment   (str)   Optional: returns the alignment lines from USalign
+    """
+    # USalign output format is similar to TM-align
+    # Define regular expressions to extract values
+    aligned_length_pattern = re.compile(r'Aligned length=\s*(\d+),\s+RMSD=\s*([0-9.]+),\s+Seq_ID=n_identical/n_aligned=\s*([0-9.]+)')
+    tm_score_pattern = re.compile(r'TM-score=\s*([0-9.]+)')
+
+    # Extract values using regular expressions
+    aligned_length_match = aligned_length_pattern.search(usalign_output)
+    tm_score_matches = tm_score_pattern.finditer(usalign_output)
+
+    # Extract values
+    aligned_length = int(aligned_length_match.group(1)) if aligned_length_match else None
+    rmsd = float(aligned_length_match.group(2)) if aligned_length_match else None
+    seq_identity = float(aligned_length_match.group(3)) if aligned_length_match else None
+    tm_scores = [float(match.group(1)) for match in tm_score_matches]
+
+    result = {
+        'len_ali': aligned_length,
+        'rmsd': rmsd,
+        'seq_id': seq_identity,
+        'qtm': tm_scores[0] if len(tm_scores) > 0 else None,
+        'ttm': tm_scores[1] if len(tm_scores) > 1 else None,
+    }
+
+    if return_alignment:
+        # Capture three lines of alignment
+        alignment_start_index = usalign_output.find('(":" denotes residue pairs')
+        if alignment_start_index == -1:
+            alignment_start_index = usalign_output.find('(":" denotes aligned residue pairs')
+        if alignment_start_index != -1:
+            alignment_lines = usalign_output[alignment_start_index:].split('\n')[1:4]
+            result['alignment'] = alignment_lines
+
+    return result
+
+
 def run_tmalign2(args):
     """Wrapper function for run_tmalign, for use with Pool.map().
 
@@ -174,6 +269,56 @@ def run_tmalign2(args):
     """
     x, y, options, keep_pdbs = args
     return run_tmalign(x, y, options, keep_pdbs)
+
+
+def run_usalign2(args):
+    """Wrapper function for run_usalign, for use with Pool.map().
+
+    Args:
+        args (iterable): Positional arguments to run_usalign().
+
+    Returns:
+        (dict): Output of run_usalign().
+    """
+    x, y, options, keep_pdbs = args
+    return run_usalign(x, y, options, keep_pdbs)
+
+
+def run_alignment(structure1_path: str, structure2_path: str, method: str = 'tmalign',
+                  options: str = None, keep_pdbs: bool = False) -> dict:
+    """
+    Unified alignment interface that dispatches to TM-align or USalign.
+
+    Args:
+        structure1_path (str): Path to the first structure file.
+        structure2_path (str): Path to the second structure file.
+        method (str): Alignment method to use ('tmalign' or 'usalign'). Default: 'tmalign'.
+        options (str, optional): Additional options for the aligner.
+        keep_pdbs (bool): Whether to keep PDB files after alignment.
+
+    Returns:
+        dict: Parsed alignment output containing metrics (len_ali, rmsd, seq_id, qtm, ttm).
+    """
+    if method.lower() == 'usalign':
+        return run_usalign(structure1_path, structure2_path, options, keep_pdbs)
+    elif method.lower() == 'tmalign':
+        return run_tmalign(structure1_path, structure2_path, options, keep_pdbs)
+    else:
+        logger.error(f"Unknown alignment method: {method}. Use 'tmalign' or 'usalign'.")
+        return {}
+
+
+def run_alignment2(args):
+    """Wrapper function for run_alignment, for use with Pool.map().
+
+    Args:
+        args (iterable): Positional arguments to run_alignment().
+
+    Returns:
+        (dict): Output of run_alignment().
+    """
+    x, y, method, options, keep_pdbs = args
+    return run_alignment(x, y, method, options, keep_pdbs)
 
 
 def pairwise_parallel_fill_tmalign_array(qfnames: list[str],
@@ -224,6 +369,52 @@ def pairwise_parallel_fill_tmalign_array(qfnames: list[str],
     return tmalign_scores
 
 
+def pairwise_parallel_fill_alignment_array(qfnames: list[str],
+                                           tfnames: list[str],
+                                           method: str = 'tmalign',
+                                           ncpu: int = -1,
+                                           mintm: float = 0.5,
+                                           options: str = None,
+                                           keep_pdbs: bool = True
+                                           ):
+    """Multi-thread alignment runs to fill a pairwise query-target matrix.
+
+    Args:
+        qfnames (list[str]): Query PDB filenames
+        tfnames (list[str]): Target PDB filenames
+        method (str): Alignment method to use ('tmalign' or 'usalign'). Default: 'tmalign'.
+        ncpu (int, optional): Number of parallel processes. Defaults to -1.
+        mintm (float, optional): Alignment scores <= mintm are set to zero.
+            Defaults to 0.5.
+        options (str, optional): options for the aligner. Defaults to None.
+        keep_pdbs (bool, optional): Whether to keep the PDB files after
+            alignment. Defaults to True.
+
+    Returns:
+        np.array[float], shape:(len(qfnames), len(tfnames)): Pairwise alignment
+            scores. NB: only max(qTM, tTM) is returned.
+    """
+    nrow = len(qfnames)
+    ncol = len(tfnames)
+
+    if ncpu <= 0:  # wiseguy eh
+        ncpu = min(nrow*ncol, cpu_count())
+
+    # Create lists of all (i, j) combinations
+    align_args = [(qfname, tfname, method, options, keep_pdbs) for \
+                  qfname in qfnames for tfname in tfnames]
+
+    with Pool(ncpu) as pool:
+        results = pool.map(run_alignment2, align_args)
+
+    alignment_scores = [max(d['qtm'], d['ttm']) for d in results]
+    alignment_scores = np.asarray(alignment_scores).reshape((nrow, ncol))
+
+    alignment_scores[alignment_scores < mintm] = 0.0
+
+    return alignment_scores
+
+
 def parallel_fill_tmalign_array(qfnames: list[str],
                                 tfnames: list[str],
                                 ncpu: int = -1,
@@ -259,5 +450,43 @@ def parallel_fill_tmalign_array(qfnames: list[str],
 
     with Pool(ncpu) as pool:
         results = pool.map(run_tmalign2, tm_args)
+
+    return results
+
+
+def parallel_fill_alignment_array(qfnames: list[str],
+                                   tfnames: list[str],
+                                   method: str = 'tmalign',
+                                   ncpu: int = -1,
+                                   options: str = None,
+                                   keep_pdbs: bool = True
+                                   ):
+    """Multi-thread alignment runs to create a pairwise query-target table.
+
+    Args:
+        qfnames (list[str]): Query PDB filenames
+        tfnames (list[str]): Target PDB filename
+        method (str): Alignment method to use ('tmalign' or 'usalign'). Default: 'tmalign'.
+        ncpu (int, optional): Number of parallel processes. Defaults to -1.
+        options (str, optional): options for the aligner. Defaults to None.
+        keep_pdbs (bool, optional): Whether to keep the PDB files after
+            alignment. Defaults to True.
+
+    Returns:
+        results (list[dict]): result dicts from alignment
+    """
+    nrow = len(qfnames)
+    ncol = len(tfnames)
+
+    if ncpu <= 0:  # wiseguy eh
+        ncpu = min(nrow*ncol, cpu_count())
+
+    # check that qfnames and tfnames have same length
+    assert nrow == ncol
+    align_args = [(qfname, tfname, method, options, keep_pdbs) for \
+                  (qfname, tfname) in zip(qfnames, tfnames)]
+
+    with Pool(ncpu) as pool:
+        results = pool.map(run_alignment2, align_args)
 
     return results

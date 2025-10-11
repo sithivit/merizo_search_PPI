@@ -17,6 +17,7 @@ from .utils import (
     read_pdb,
     write_pdb,
     run_tmalign,
+    run_alignment,
 )
 
 from .dbutil import (
@@ -90,7 +91,8 @@ def search_query_against_db(query_dict, target_dict, mincov, topk, score_correct
 def dbsearch(query, target_dict: dict, tmp: str, network: FoldClassNet,
              topk: int, mincov: float, mincos: float, mintm: float,
              fastmode: bool, device: torch.device, inputs_are_ca: bool = False,
-             pdb_chain: str = "A", skip_tmalign=False, score_corrections=None):
+             pdb_chain: str = "A", skip_tmalign=False, score_corrections=None,
+             alignment_method: str = 'tmalign'):
 
     with torch.no_grad():
         if inputs_are_ca:
@@ -169,7 +171,8 @@ def dbsearch(query, target_dict: dict, tmp: str, network: FoldClassNet,
                     query_fn = write_pdb(tmp, query_dict['coords'], query_dict['seq'])
                     target_fn = write_pdb(tmp, target_coords, target_seq)
 
-                    tm_output = run_tmalign(query_fn, target_fn, options='-fast' if fastmode else None)
+                    tm_output = run_alignment(query_fn, target_fn, method=alignment_method,
+                                              options='-fast' if fastmode else None)
                     max_tm = max(tm_output['qtm'], tm_output['ttm'])
 
                     if tm_output['len_ali'] >= len(target_seq) * mincov:
@@ -214,7 +217,7 @@ def dbsearch_faiss(queries: list[dict], target_dict: dict, tmp: str, network: Fo
                 topk: int, mincov: float, mincos: float, mintm: float, fastmode: bool,
                 device: torch.device, inputs_are_ca: bool=False,
                 search_batchsize:int=262144, search_type='IP', pdb_chain:str="A",
-                skip_tmalign=False, score_corrections=None):
+                skip_tmalign=False, score_corrections=None, alignment_method: str = 'tmalign'):
 
 
     import faiss
@@ -450,7 +453,8 @@ def dbsearch_faiss(queries: list[dict], target_dict: dict, tmp: str, network: Fo
             query_fn = write_pdb(tmp, query_dicts[qi]['coords'], query_dicts[qi]['seq'], name=os.path.basename(query_dicts[qi]['name']))
             target_fn = write_pdb(tmp, target_coords, target_seq, name=target_name)
 
-            tm_output = run_tmalign(query_fn, target_fn, options='-fast' if fastmode else None, keep_pdbs=False)
+            tm_output = run_alignment(query_fn, target_fn, method=alignment_method,
+                                      options='-fast' if fastmode else None, keep_pdbs=False)
             max_tm = max(tm_output['qtm'], tm_output['ttm'])
 
             # if tm_output['len_ali'] >= len(target_seq) * mincov and max_tm >= mintm:
@@ -493,7 +497,8 @@ def dbsearch_faiss(queries: list[dict], target_dict: dict, tmp: str, network: Fo
 
 def run_dbsearch(inputs: list[str], db_name: str, tmp: str, device: torch.device, topk: int, fastmode: bool,
                  threads: int, mincos: float, mintm: float, mincov: float, inputs_are_ca: bool=False,
-                 search_batchsize:int=262144, search_type='IP', pdb_chain: str=None, skip_tmalign:bool=False) -> None:
+                 search_batchsize:int=262144, search_type='IP', pdb_chain: str=None, skip_tmalign:bool=False,
+                 alignment_method: str = 'tmalign') -> None:
 
 
     if len(inputs) == 0:
@@ -531,7 +536,8 @@ def run_dbsearch(inputs: list[str], db_name: str, tmp: str, device: torch.device
                               target_dict=target_db,
                               search_batchsize=search_batchsize,
                               search_type=search_type,
-                              skip_tmalign=skip_tmalign
+                              skip_tmalign=skip_tmalign,
+                              alignment_method=alignment_method
                             )
     else:
         # if pdb_chain:
@@ -563,7 +569,8 @@ def run_dbsearch(inputs: list[str], db_name: str, tmp: str, device: torch.device
                 device=device,
                 inputs_are_ca=inputs_are_ca,
                 pdb_chain=pdb_chains[idx],
-                skip_tmalign=skip_tmalign
+                skip_tmalign=skip_tmalign,
+                alignment_method=alignment_method
             )
 
             search_results.append(results)

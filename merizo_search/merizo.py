@@ -155,6 +155,8 @@ def search(args):
     parser.add_argument("--multi_domain_mode", type=str, default='exhaustive_tmalign', choices=['exhaustive_tmalign'],
                         help="If --multi_domain_search is used, specifies the multi-domain search mode. Currently only 'exhaustive_tmalign' is supported.")
                          #Run pairwise TM-align for each query domain and potential hit domain. If all query domains can be aligned (tm> --mintm) to domains in the hit, it is a full-length hit.")
+    parser.add_argument("--alignment_method", type=str, default='tmalign', choices=['tmalign', 'usalign'],
+                        help="Structural alignment method to use for verifying hits. Options: 'tmalign' (default), 'usalign'.")
 
     args = parser.parse_args(args)
     tmp = munge_tmp_with_uuid(args.tmp)
@@ -199,7 +201,8 @@ def search(args):
         pdb_chain=args.pdb_chain,
         search_batchsize=args.search_batchsize,
         search_type=args.search_metric,
-        skip_tmalign=False #args.multi_domain_search
+        skip_tmalign=False, #args.multi_domain_search
+        alignment_method=args.alignment_method
     )
     write_search_results(results=search_results, output_file=search_output, format_list=output_fields, header=args.output_headers, metadata_json=args.metadata_json)
     if args.report_insignificant_hits:
@@ -217,7 +220,8 @@ def search(args):
             mintm=args.mintm,
             inputs_from_easy_search=False,
             pdb_chain=args.pdb_chain,
-            mode=args.multi_domain_mode
+            mode=args.multi_domain_mode,
+            alignment_method=args.alignment_method
         )
 
         write_all_dom_search_results(fl_search_results, multi_domain_search_output, args.output_headers)
@@ -285,6 +289,8 @@ def easy_search(args):
     parser.add_argument("--conf_threshold", type=float, default=0.5, help="[For iteration mode] Controls the minimum confidence to accept for iteration move.")
     parser.add_argument("--pdb_chain", type=str, dest="pdb_chain", default="A",
                         help="Select which PDB Chain you are analysing. Defaut is chain A. You can provide a comma separated list if you can provide more than one input pdb")
+    parser.add_argument("--alignment_method", type=str, default='tmalign', choices=['tmalign', 'usalign'],
+                        help="Structural alignment method to use for verifying hits. Options: 'tmalign' (default), 'usalign'.")
 
     args = parser.parse_args(args)
     tmp = munge_tmp_with_uuid(args.tmp)
@@ -385,7 +391,8 @@ def easy_search(args):
         pdb_chain=pdb_chains_for_search,
         search_batchsize=args.search_batchsize,
         search_type=args.search_metric,
-        skip_tmalign=False #args.multi_domain_search
+        skip_tmalign=False, #args.multi_domain_search
+        alignment_method=args.alignment_method
     )
 
     write_search_results(results=search_results, output_file=search_output, format_list=output_fields, header=args.output_headers, metadata_json=args.metadata_json)
@@ -404,7 +411,8 @@ def easy_search(args):
             mintm=args.mintm,
             inputs_from_easy_search=True,
             mode=args.multi_domain_mode,
-            pdb_chain=None
+            pdb_chain=None,
+            alignment_method=args.alignment_method
         )
         if fl_search_results is not None:
             write_all_dom_search_results(fl_search_results, multi_domain_search_output, args.output_headers)

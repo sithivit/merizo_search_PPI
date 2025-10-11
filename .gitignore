@@ -15,3 +15,7 @@ merizo_search.code-workspace
 merizo_search/.vscode/
 tmp*
 utils/
+extract_pdbs.py
+remove_cif_files.py
+EColi/
+ecoli_fusion_db/
