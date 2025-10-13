@@ -44,7 +44,8 @@ def network_setup(threads: int, device: str) -> FoldClassNet:
     scriptdir = os.path.dirname(os.path.realpath(__file__))
     network.load_state_dict(torch.load(scriptdir + '/FINAL_foldclass_model.pt',
                                        map_location=lambda storage,
-                                       loc: storage),
+                                       loc: storage,
+                                       weights_only=False),
                             strict=False)
 
     return network, device
@@ -53,7 +54,22 @@ def network_setup(threads: int, device: str) -> FoldClassNet:
 def read_database(db_name: str, device: str):
     # first determine if we're using a faiss db or a pt one
     if os.path.exists(db_name + '.pt'):
-        target_db = torch.load(db_name + '.pt').to(device)
+        # Check if the .pt file is a text reference to another database
+        pt_file_path = db_name + '.pt'
+        try:
+            with open(pt_file_path, 'r') as f:
+                first_line = f.read().strip()
+                # If it's a text reference (ends with .pt), use that database instead
+                if first_line.endswith('.pt'):
+                    db_dir = os.path.dirname(db_name)
+                    actual_db_name = os.path.join(db_dir, first_line[:-3])  # Remove .pt extension
+                    logger.info(f"Database reference found, redirecting to: {actual_db_name}")
+                    return read_database(actual_db_name, device)
+        except UnicodeDecodeError:
+            # Not a text file, proceed with normal loading
+            pass
+
+        target_db = torch.load(db_name + '.pt', weights_only=False).to(device)
 
         with open(db_name + '.index', 'rb') as targfile:
             target_index = pickle.load(targfile)

@@ -6,7 +6,10 @@
       "Bash(git stash show:*)",
       "Bash(git stash:*)",
       "WebFetch(domain:github.com)",
-      "WebFetch(domain:raw.githubusercontent.com)"
+      "WebFetch(domain:raw.githubusercontent.com)",
+      "Bash(python:*)",
+      "Bash(dir /s ..examplesdatabasecath.*)",
+      "Bash(cat:*)"
     ],
     "deny": [],
     "ask": []

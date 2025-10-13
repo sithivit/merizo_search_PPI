@@ -29,7 +29,7 @@ def network_setup(device: str) -> FoldClassNet:
     network = FoldClassNet(128).to(device).eval().to(torch.device(device))
 
     scriptdir = os.path.dirname(os.path.realpath(__file__))
-    network.load_state_dict(torch.load(scriptdir + '/FINAL_foldclass_model.pt', map_location=lambda storage, loc: storage), strict=False)
+    network.load_state_dict(torch.load(scriptdir + '/FINAL_foldclass_model.pt', map_location=lambda storage, loc: storage, weights_only=False), strict=False)
 
     return network
 

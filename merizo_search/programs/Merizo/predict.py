@@ -132,7 +132,7 @@ def read_split_weight_files(directory: str) -> dict:
     # Read the weights from each file
     for file in weight_files:
         file_path = os.path.join(directory, file)
-        subset_weights = torch.load(file_path)
+        subset_weights = torch.load(file_path, weights_only=False)
 
         # Add the subset weights to the overall weights dictionary
         weights.update(subset_weights)
