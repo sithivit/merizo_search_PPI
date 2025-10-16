@@ -48,10 +48,15 @@ class StructuralRosettaStoneSearch:
         self.top_k = top_k
         self.device = get_device(device)
 
-        # Load domain registry
+        # Load domain registry (or build from metadata if missing)
         logger.info("Loading domain registry...")
-        with open(self.fusion_db_dir / 'domain_registry.pkl', 'rb') as f:
-            self.domain_registry = pickle.load(f)
+        registry_path = self.fusion_db_dir / 'domain_registry.pkl'
+        if registry_path.exists():
+            with open(registry_path, 'rb') as f:
+                self.domain_registry = pickle.load(f)
+        else:
+            logger.warning("domain_registry.pkl not found, will reconstruct from metadata")
+            self.domain_registry = {}
 
         # Load domain embeddings database
         logger.info("Loading domain embeddings...")

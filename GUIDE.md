@@ -7,14 +7,16 @@
 ## Table of Contents
 
 1. [System Overview](#system-overview)
-2. [Component 1: Merizo (Domain Segmentation)](#component-1-merizo-domain-segmentation)
-3. [Component 2: Foldclass (Structural Embeddings)](#component-2-foldclass-structural-embeddings)
-4. [Component 3: Rosetta Stone (Fusion Database)](#component-3-rosetta-stone-fusion-database)
-5. [Component 4: Promiscuity Filter](#component-4-promiscuity-filter)
-6. [Complete Pipeline Flow](#complete-pipeline-flow)
-7. [Data Flow & Storage](#data-flow--storage)
-8. [GPU Memory Management](#gpu-memory-management)
-9. [Usage Examples](#usage-examples)
+2. [DDI vs PPI: Important Distinction](#ddi-vs-ppi-important-distinction)
+3. [CLI Modes Reference](#cli-modes-reference)
+4. [Component 1: Merizo (Domain Segmentation)](#component-1-merizo-domain-segmentation)
+5. [Component 2: Foldclass (Structural Embeddings)](#component-2-foldclass-structural-embeddings)
+6. [Component 3: Rosetta Stone (Fusion Database)](#component-3-rosetta-stone-fusion-database)
+7. [Component 4: Promiscuity Filter](#component-4-promiscuity-filter)
+8. [Complete Pipeline Flow](#complete-pipeline-flow)
+9. [Data Flow & Storage](#data-flow--storage)
+10. [GPU Memory Management](#gpu-memory-management)
+11. [Usage Examples](#usage-examples)
 
 ---
 
@@ -62,6 +64,544 @@ Example:
 │                                          High-Confidence PPIs           │
 │                                                                           │
 └─────────────────────────────────────────────────────────────────────────┘
+```
+
+---
+
+## DDI vs PPI: Important Distinction
+
+### What This System Actually Predicts
+
+**This system predicts Domain-Domain Interactions (DDI), which then infer Protein-Protein Interactions (PPI).**
+
+```
+┌─────────────────────────────────────────────────────────────────────┐
+│  DOMAIN-DOMAIN INTERACTIONS → PROTEIN-PROTEIN INTERACTIONS          │
+├─────────────────────────────────────────────────────────────────────┤
+│                                                                       │
+│  MECHANISM: Domain-Domain Interaction (DDI)                          │
+│  ┌──────────────────────────────────────────────────────┐           │
+│  │  Query Protein X:    [Domain A]                      │           │
+│  │  Target Protein Y:   [Domain B]                      │           │
+│  │                                                       │           │
+│  │  Rosetta Stone Evidence:                             │           │
+│  │  Fusion Protein Z:   [Domain A']--[Domain B']        │           │
+│  │                           ↓           ↓               │           │
+│  │                    similar to    similar to          │           │
+│  │                           ↓           ↓               │           │
+│  │                      Domain A     Domain B           │           │
+│  │                                                       │           │
+│  │  PREDICTION: Domain A ←→ Domain B                    │           │
+│  │             (specific binding interface!)            │           │
+│  └──────────────────────────────────────────────────────┘           │
+│                          │                                           │
+│                          ▼                                           │
+│  BIOLOGICAL OUTCOME: Protein-Protein Interaction (PPI)               │
+│  ┌──────────────────────────────────────────────────────┐           │
+│  │  Protein X ←→ Protein Y                              │           │
+│  │                                                       │           │
+│  │  They interact via their domains:                    │           │
+│  │  - Protein X provides Domain A                       │           │
+│  │  - Protein Y provides Domain B                       │           │
+│  │  - Binding occurs at the A-B interface               │           │
+│  └──────────────────────────────────────────────────────┘           │
+│                                                                       │
+└─────────────────────────────────────────────────────────────────────┘
+```
+
+### Why DDI Prediction is Better Than Traditional PPI Prediction
+
+```
+Traditional PPI Prediction:
+  Output: "Protein X interacts with Protein Y"
+  Problem: Doesn't tell you WHERE or HOW they interact
+
+Domain-Domain Interaction (DDI) Prediction:
+  Output: "Protein X (domain A, residues 50-150) interacts with
+           Protein Y (domain B, residues 200-350)"
+  Benefits:
+    ✓ Identifies specific binding interfaces
+    ✓ Explains mechanism of interaction
+    ✓ Enables structure-based drug design
+    ✓ Distinguishes different interaction modes
+    ✓ More specific and actionable
+```
+
+### Example
+
+```
+Query: Human Kinase Protein (500 residues)
+  ├─ Domain 1: Kinase domain (residues 50-300)
+  └─ Domain 2: SH2 domain (residues 350-450)
+
+DDI Predictions:
+  1. Kinase domain (50-300) ←→ Substrate Protein Domain X
+     → Prediction: Kinase phosphorylates Substrate
+     → Confidence: 0.92
+     → Evidence: 8 Rosetta Stones
+
+  2. SH2 domain (350-450) ←→ Adaptor Protein Domain Y
+     → Prediction: Kinase recruited to signaling complex
+     → Confidence: 0.85
+     → Evidence: 12 Rosetta Stones
+
+PPI Inference:
+  - Kinase protein interacts with Substrate protein (via kinase domain)
+  - Kinase protein interacts with Adaptor protein (via SH2 domain)
+  - Two different interaction modes for the same protein!
+```
+
+### Terminology Used in This System
+
+- **DDI (Domain-Domain Interaction)**: The fundamental prediction unit
+  - What the system directly predicts
+  - Specific structural interfaces between domains
+
+- **PPI (Protein-Protein Interaction)**: The biological outcome
+  - Inferred from DDI predictions
+  - Multiple DDIs can contribute to one PPI
+  - One protein can have multiple PPIs via different domains
+
+- **Rosetta Stone**: The evidence for DDI/PPI
+  - Fusion proteins where domains appear together
+  - Evolutionary evidence of functional relationship
+
+---
+
+## CLI Modes Reference
+
+The Merizo-Search system provides 5 main modes:
+
+```
+┌─────────────────────────────────────────────────────────────────────┐
+│  MERIZO-SEARCH CLI MODES                                             │
+├─────────────────────────────────────────────────────────────────────┤
+│                                                                       │
+│  1. segment       - Domain segmentation only                         │
+│  2. createdb      - Build Foldclass domain database                  │
+│  3. search        - Search domains against Foldclass database        │
+│  4. easy-search   - Segment + search in one command                  │
+│  5. rosetta       - Rosetta Stone PPI prediction (DDI-based)         │
+│                                                                       │
+│  Usage: python merizo_search/merizo.py <mode> [args]                │
+│                                                                       │
+└─────────────────────────────────────────────────────────────────────┘
+```
+
+### Mode 1: segment
+
+**Purpose**: Segment multi-domain proteins into individual domains
+
+```bash
+# Basic segmentation
+python merizo_search/merizo.py segment \
+    input.pdb \
+    output_prefix \
+    -d cuda
+
+# Multiple inputs with options
+python merizo_search/merizo.py segment \
+    input1.pdb input2.pdb \
+    output_prefix \
+    -d cuda \
+    --save_domains \
+    --save_pdf \
+    --iterate \
+    --output_headers
+
+# Advanced: filter and save high-confidence domains
+python merizo_search/merizo.py segment \
+    input.pdb \
+    output \
+    -d cuda \
+    --conf_filter 0.7 \
+    --plddt_filter 70 \
+    --save_domains
+```
+
+**Key Options**:
+- `--save_domains`: Save each domain as separate PDB file
+- `--save_pdf`: Generate domain boundary visualization
+- `--iterate`: Iterative refinement for complex proteins
+- `--conf_filter`: Only save domains above confidence threshold
+- `--plddt_filter`: Only save domains above pLDDT threshold
+- `--min_domain_size`: Minimum residues per domain (default: 50)
+
+**Output**:
+- `{output}_segment.tsv`: Segmentation results table
+- `{output}_domain_0.pdb`, `{output}_domain_1.pdb`, ...: Individual domains (if `--save_domains`)
+- `{output}_domains.pdf`: Visualization (if `--save_pdf`)
+
+**Use Case**:
+- Analyze protein domain architecture
+- Extract domains for further analysis
+- Visualize domain organization
+
+---
+
+### Mode 2: createdb
+
+**Purpose**: Build Foldclass embedding database from domain structures
+
+```bash
+# Build from directory of PDB files
+python merizo_search/merizo.py createdb \
+    /path/to/pdb_directory/ \
+    output_database_prefix \
+    -d cuda
+
+# Build from tar/zip archive
+python merizo_search/merizo.py createdb \
+    structures.tar.gz \
+    output_database \
+    -d cuda \
+    --max-length 2000
+
+# Specify temp directory
+python merizo_search/merizo.py createdb \
+    structures.zip \
+    output_db \
+    -d cuda \
+    -t /tmp/merizo_temp
+```
+
+**Key Options**:
+- `--max-length`: Maximum residues per protein (default: 2000)
+- `-t, --tmpdir`: Temporary directory for extraction
+
+**Output**:
+- `{output_database}.pt`: PyTorch tensor of embeddings
+- `{output_database}.index`: Metadata index file
+
+**Database Format**:
+```python
+{
+  'embeddings': torch.Tensor([N, 128]),  # N domain embeddings
+  'names': List[str],                     # Domain IDs
+  'metadata': List[dict]                  # Additional info
+}
+```
+
+**Use Case**:
+- Create searchable database of known domains
+- Build custom domain libraries
+- Prepare reference database for similarity search
+
+---
+
+### Mode 3: search
+
+**Purpose**: Search query domains against Foldclass database (structural similarity)
+
+```bash
+# Basic search
+python merizo_search/merizo.py search \
+    query.pdb \
+    database_prefix \
+    output_prefix \
+    tmp_dir \
+    -d cuda
+
+# Advanced search with validation
+python merizo_search/merizo.py search \
+    query.pdb \
+    database_prefix \
+    output \
+    tmp \
+    -d cuda \
+    -k 10 \
+    --mincos 0.6 \
+    --mintm 0.5 \
+    --mincov 0.7 \
+    --output_headers
+
+# Fast mode (skip TM-align)
+python merizo_search/merizo.py search \
+    query.pdb \
+    database \
+    output \
+    tmp \
+    -d cuda \
+    --fastmode
+```
+
+**Key Options**:
+- `-k, --topk`: Number of matches to return per domain (default: 1)
+- `-s, --mincos`: Minimum cosine similarity threshold (default: 0.5)
+- `-m, --mintm`: Minimum TM-align score threshold (default: 0.5)
+- `-c, --mincov`: Minimum coverage threshold (default: 0.7)
+- `-f, --fastmode`: Use fast TM-align (less accurate, faster)
+- `--format`: Customize output columns
+
+**Output**:
+- `{output}_search.tsv`: Search results
+- `{output}_search_insignificant.tsv`: Below-threshold hits (if `--report_insignificant_hits`)
+
+**Result Columns**:
+```
+query, target, emb_rank, emb_score, q_len, t_len,
+ali_len, seq_id, q_tm, t_tm, max_tm, rmsd, metadata
+```
+
+**Use Case**:
+- Find structurally similar domains
+- Identify domain families
+- Structural annotation of unknown domains
+
+---
+
+### Mode 4: easy-search
+
+**Purpose**: Combined segmentation + search pipeline
+
+```bash
+# One-step domain search
+python merizo_search/merizo.py easy-search \
+    query.pdb \
+    database_prefix \
+    output_prefix \
+    tmp_dir \
+    -d cuda
+
+# Multi-domain protein with full output
+python merizo_search/merizo.py easy-search \
+    multi_domain_protein.pdb \
+    database \
+    output \
+    tmp \
+    -d cuda \
+    -k 5 \
+    --output_headers \
+    --save_domains \
+    --save_pdf
+
+# Multi-domain interaction search
+python merizo_search/merizo.py easy-search \
+    query.pdb \
+    database \
+    output \
+    tmp \
+    -d cuda \
+    --multi_domain_search \
+    --multi_domain_mode exhaustive_tmalign
+```
+
+**Key Options**:
+- All `segment` mode options (domain extraction)
+- All `search` mode options (database search)
+- `--multi_domain_search`: Find proteins matching ALL query domains
+- `--multi_domain_mode`: Algorithm for multi-domain matching
+
+**Output**:
+- `{output}_segment.tsv`: Segmentation results
+- `{output}_search.tsv`: Search results for each domain
+- `{output}_search_multi_dom.tsv`: Full-length matches (if `--multi_domain_search`)
+
+**Use Case**:
+- Quick domain analysis + homology search
+- Identify proteins with similar domain architecture
+- Find fusion partners
+
+---
+
+### Mode 5: rosetta (Rosetta Stone PPI Prediction)
+
+**Purpose**: Predict protein-protein interactions using domain fusion analysis
+
+This mode has two subcommands: `build` and `search`
+
+#### 5a. rosetta build (Build Fusion Database)
+
+```bash
+# Basic fusion database build
+python merizo_search/merizo.py rosetta build \
+    /path/to/structures/ \
+    fusion_db_output/ \
+    -d cuda
+
+# Optimized for 6GB GPU
+python merizo_search/merizo.py rosetta build \
+    structures/ \
+    fusion_db/ \
+    -d cuda \
+    --batch-size 4 \
+    --max-protein-size 1800
+
+# Skip promiscuity filtering (faster)
+python merizo_search/merizo.py rosetta build \
+    structures/ \
+    fusion_db/ \
+    -d cuda \
+    --skip-promiscuity
+
+# Custom parameters
+python merizo_search/merizo.py rosetta build \
+    structures/ \
+    fusion_db/ \
+    -d cuda \
+    --min-domains 2 \
+    --max-protein-size 2000 \
+    --batch-size 2 \
+    --promiscuity-threshold 30
+```
+
+**Key Options**:
+- `--min-domains`: Minimum domains per protein (default: 2)
+- `--max-protein-size`: Max residues to prevent OOM (default: 1800)
+- `--batch-size`: Embedding batch size (default: 4, reduce to 2 if OOM)
+- `--skip-promiscuity`: Skip promiscuity index building
+- `--promiscuity-threshold`: Partner count threshold (default: 25)
+- `-d, --device`: Device (cpu, cuda, mps)
+
+**Output Files**:
+```
+fusion_db/
+├── domain_embeddings.pt       # All domain embeddings [N, 128]
+├── domain_metadata.index      # Domain information
+├── fusion_metadata.index      # Fusion link information
+└── promiscuity_index.pkl      # Promiscuity filter (if not skipped)
+```
+
+**Processing Flow**:
+1. Segment each protein (skip single-domain proteins)
+2. Embed each domain (128-dim vector)
+3. Find fusion links (pairs of domains in same protein)
+4. Store embeddings and metadata
+5. Build promiscuity index (cluster domains, count partners)
+
+**Performance** (RTX 3060 6GB):
+- Throughput: 2-5 proteins/min
+- Memory: < 3 GB (stable)
+- 23,586 proteins: ~10 hours
+
+#### 5b. rosetta search (Search for PPIs)
+
+```bash
+# Basic PPI search
+python merizo_search/merizo.py rosetta search \
+    query.pdb \
+    fusion_db/ \
+    output_prefix \
+    -d cuda
+
+# With structural validation
+python merizo_search/merizo.py rosetta search \
+    query.pdb \
+    fusion_db/ \
+    output \
+    -d cuda \
+    --validate-tm \
+    --min-tm-score 0.5 \
+    --fastmode
+
+# Adjust sensitivity
+python merizo_search/merizo.py rosetta search \
+    query.pdb \
+    fusion_db/ \
+    output \
+    -d cuda \
+    --cosine-threshold 0.6 \
+    --top-k 50 \
+    --output-headers
+
+# Skip promiscuity filter
+python merizo_search/merizo.py rosetta search \
+    query.pdb \
+    fusion_db/ \
+    output \
+    -d cuda \
+    --skip-filter
+```
+
+**Key Options**:
+- `--cosine-threshold`: Similarity threshold (default: 0.7)
+- `--top-k`: Number of top matches to consider (default: 20)
+- `--validate-tm`: Run TM-align validation
+- `--min-tm-score`: Minimum TM-score for validation (default: 0.5)
+- `--fastmode`: Fast TM-align mode
+- `--skip-filter`: Skip promiscuity filtering
+- `--output-headers`: Include headers in output
+
+**Output**:
+- `{output}_rosetta.json`: Interaction predictions (JSON format)
+- Console: Top 10 predictions summary
+
+**Output Format**:
+```json
+{
+  "query": "query.pdb",
+  "num_predictions": 15,
+  "predictions": [
+    {
+      "query_domain_id": "query_domain_0",
+      "query_protein": "query",
+      "query_range": [1, 120],
+      "target_domain_id": "AF-P12345_domain_1",
+      "target_protein": "AF-P12345",
+      "target_range": [135, 280],
+      "interaction_type": "inter",
+      "confidence_score": 0.89,
+      "cosine_similarity": 0.92,
+      "tm_score": 0.72,
+      "num_rosetta_stones": 5,
+      "rosetta_stone_evidence": [
+        {"rosetta_stone_id": "AF-Q98765", "linker_length": 15},
+        {"rosetta_stone_id": "AF-P54321", "linker_length": 8}
+      ],
+      "promiscuity_filtered": false
+    }
+  ]
+}
+```
+
+**Confidence Score Formula**:
+```
+confidence = (
+  0.4 × cosine_similarity +      # Structural similarity
+  0.3 × num_rosetta_stones/10 +  # Evidence count
+  0.2 × (1 - promiscuity) +     # Domain specificity
+  0.1 × min_conf                 # Merizo confidence
+)
+```
+
+**Use Case**:
+- Predict protein interaction partners
+- Identify domain-domain interfaces
+- Discover protein complexes
+- Infer signaling pathways
+
+---
+
+### Mode Comparison Table
+
+| Mode | Input | Output | Speed | Use Case |
+|------|-------|--------|-------|----------|
+| `segment` | PDB file | Domain boundaries | Fast (5-10s) | Domain architecture analysis |
+| `createdb` | PDB directory | Embedding database | Medium (varies) | Build search database |
+| `search` | PDB + database | Similar domains | Medium (30s) | Find structural homologs |
+| `easy-search` | PDB + database | Segment + search | Medium (30s) | One-step homology search |
+| `rosetta build` | PDB directory | Fusion database | Slow (hours) | Build PPI database (once) |
+| `rosetta search` | PDB + fusion DB | PPI predictions | Fast (30s) | Predict interactions |
+
+### Recommended Workflow
+
+```
+┌─────────────────────────────────────────────────────────────────────┐
+│  TYPICAL WORKFLOW                                                    │
+├─────────────────────────────────────────────────────────────────────┤
+│                                                                       │
+│  SETUP (One-time):                                                   │
+│  1. rosetta build  → Create fusion database from proteome           │
+│                                                                       │
+│  ANALYSIS (Per query):                                               │
+│  2. segment        → Examine domain architecture (optional)          │
+│  3. rosetta search → Predict interaction partners                    │
+│                                                                       │
+│  ALTERNATIVE:                                                        │
+│  - Use easy-search for quick domain homology search                  │
+│  - Use createdb + search for custom domain databases                 │
+│                                                                       │
+└─────────────────────────────────────────────────────────────────────┘
 ```
 
 ---

@@ -106,6 +106,7 @@ def createdb(args):
     parser.add_argument('out_db', type=str, help='Output prefix for the created Foldclass db.')
     parser.add_argument('-d', '--device', type=str, default='cpu', required=False, help="Hardware to run on. Options: 'cpu', 'cuda', 'mps'.")
     parser.add_argument('-t', '--tmpdir', type=str, required=False, help='Path to temporary directory; used only if input is not a directory.')
+    parser.add_argument('--max-length', type=int, default=2000, required=False, help="Maximum number of residues to process per protein. (default: 2000)")
     args = parser.parse_args(args)
 
     logging.info('Starting createdb with command: \n\n{}\n'.format(
@@ -117,7 +118,8 @@ def createdb(args):
     createdb_from_pdb(
         pdb_files=args.input,
         out_db=args.out_db,
-        device=args.device
+        device=args.device,
+        max_length=args.max_length
     )
 
     elapsed_time = time.time() - start_time
