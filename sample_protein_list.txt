@@ -1,0 +1,19 @@
+# Sample protein list for benchmark testing
+#
+# Format: One protein ID per line
+# Lines starting with # are comments and will be ignored
+#
+# You can specify:
+# - Protein ID without extension: AF-Q14686
+# - Protein ID with extension: AF-Q14686.pdb
+# - Full path: examples/database/AF-Q14686.pdb
+#
+# Uncomment the proteins you want to test:
+
+# Example AlphaFold proteins
+# AF-Q14686
+# AF-P12345
+# AF-P54321
+# AF-Q98765
+
+# Add your protein IDs below:

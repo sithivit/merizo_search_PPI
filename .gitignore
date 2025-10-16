@@ -28,3 +28,5 @@ IMPLEMENTATION.md
 ecoli_fusion_db/
 .claude/
 EColi/
+
+results_rosetta*.json

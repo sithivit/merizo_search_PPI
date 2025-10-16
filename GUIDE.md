@@ -17,6 +17,7 @@
 9. [Data Flow & Storage](#data-flow--storage)
 10. [GPU Memory Management](#gpu-memory-management)
 11. [Usage Examples](#usage-examples)
+12. [Benchmark System](#benchmark-system)
 
 ---
 
@@ -1674,6 +1675,803 @@ watch -n 0.5 nvidia-smi
 │  └─ Total database: ~500 MB - 2 GB                              │
 │                                                                   │
 └─────────────────────────────────────────────────────────────────┘
+```
+
+---
+
+## Benchmark System
+
+### Overview
+
+To evaluate the Rosetta Stone PPI prediction system, we measure three key dimensions:
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│  BENCHMARK DIMENSIONS                                            │
+├─────────────────────────────────────────────────────────────────┤
+│                                                                   │
+│  1. SPEED (Performance & Throughput)                             │
+│     • Database build time                                        │
+│     • Query search time                                          │
+│     • Component-level timing breakdown                           │
+│                                                                   │
+│  2. SENSITIVITY (Recall - Coverage of True Interactions)         │
+│     • True Positive Rate (TPR)                                   │
+│     • What percentage of known interactions are found            │
+│     • Coverage at different confidence thresholds                │
+│                                                                   │
+│  3. ACCURACY (Precision - Quality of Predictions)                │
+│     • Positive Predictive Value (PPV)                            │
+│     • What percentage of predictions are correct                 │
+│     • False Discovery Rate (FDR)                                 │
+│                                                                   │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+---
+
+### Benchmark Datasets
+
+#### Gold Standard PPI Databases
+
+Use established databases with experimentally validated interactions:
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│  RECOMMENDED GOLD STANDARD DATABASES                             │
+├─────────────────────────────────────────────────────────────────┤
+│                                                                   │
+│  1. STRING Database (https://string-db.org)                      │
+│     • Multi-organism coverage                                    │
+│     • Confidence scores available                                │
+│     • Use high-confidence subset (score > 0.7)                   │
+│     • Organisms: E. coli, S. cerevisiae, H. sapiens             │
+│                                                                   │
+│  2. IntAct (https://www.ebi.ac.uk/intact)                        │
+│     • Literature-curated interactions                            │
+│     • Experimental evidence codes                                │
+│     • Filter for physical interactions only                      │
+│     • Use interactions with ≥2 publications                      │
+│                                                                   │
+│  3. BioGRID (https://thebiogrid.org)                             │
+│     • Large-scale genetic and protein interactions               │
+│     • Organism-specific datasets available                       │
+│     • Filter for physical interactions                           │
+│                                                                   │
+│  4. DIP (Database of Interacting Proteins)                       │
+│     • Manually curated core set                                  │
+│     • High-quality interactions                                  │
+│                                                                   │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+#### Test Set Construction
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│  TEST SET CONSTRUCTION PROTOCOL                                  │
+├─────────────────────────────────────────────────────────────────┤
+│                                                                   │
+│  POSITIVE SET (True Interactions):                               │
+│  ┌──────────────────────────────────────────┐                   │
+│  │ • Select proteins with known interactions │                   │
+│  │ • Filter criteria:                        │                   │
+│  │   - At least 2 experimental evidences     │                   │
+│  │   - Physical interaction (not genetic)    │                   │
+│  │   - High confidence score (>0.7 if avail) │                   │
+│  │ • Organisms:                              │                   │
+│  │   - E. coli K12: 500 protein pairs        │                   │
+│  │   - S. cerevisiae: 1,000 protein pairs    │                   │
+│  │   - H. sapiens: 2,000 protein pairs       │                   │
+│  └──────────────────────────────────────────┘                   │
+│                                                                   │
+│  NEGATIVE SET (Non-Interactions):                                │
+│  ┌──────────────────────────────────────────┐                   │
+│  │ Strategy 1: Random Pairing                │                   │
+│  │ • Randomly pair proteins                  │                   │
+│  │ • Exclude known interactions              │                   │
+│  │ • 10:1 ratio (negative:positive)          │                   │
+│  │                                            │                   │
+│  │ Strategy 2: Compartment-Based             │                   │
+│  │ • Pair proteins from different            │                   │
+│  │   cellular compartments                   │                   │
+│  │ • Example: Nuclear ←X→ Mitochondrial      │                   │
+│  │ • More biologically realistic             │                   │
+│  │                                            │                   │
+│  │ Strategy 3: Domain Architecture           │                   │
+│  │ • Pair proteins with incompatible         │                   │
+│  │   domain architectures                    │                   │
+│  └──────────────────────────────────────────┘                   │
+│                                                                   │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+---
+
+### Benchmark 1: Speed Performance
+
+#### Metrics
+
+```python
+# 1. Database Build Performance
+database_build_metrics = {
+    'total_time': 'Total time to build fusion database (hours)',
+    'proteins_per_minute': 'Processing throughput',
+    'avg_segmentation_time': 'Average time per protein (seconds)',
+    'avg_embedding_time': 'Average time per domain (seconds)',
+    'gpu_memory_peak': 'Maximum GPU memory used (GB)',
+    'gpu_memory_average': 'Average GPU memory used (GB)',
+    'checkpoint_time': 'Time to save checkpoints (seconds)'
+}
+
+# 2. Query Search Performance
+query_search_metrics = {
+    'total_query_time': 'End-to-end query time (seconds)',
+    'segmentation_time': 'Time to segment query protein (seconds)',
+    'embedding_time': 'Time to embed query domains (seconds)',
+    'faiss_search_time': 'FAISS similarity search time (seconds)',
+    'tm_align_time': 'TM-align validation time (seconds, optional)',
+    'ranking_time': 'Time to rank and filter predictions (seconds)'
+}
+```
+
+#### Benchmark Protocol
+
+```bash
+# Database Build Speed Test
+python merizo_search/merizo.py rosetta build \
+    test_dataset_100_proteins/ \
+    test_db/ \
+    -d cuda \
+    --timing-log build_speed.json
+
+# Query Search Speed Test (100 queries)
+for query in test_queries/*.pdb; do
+    time python merizo_search/merizo.py rosetta search \
+        $query \
+        test_db/ \
+        results/ \
+        -d cuda \
+        --timing-log >> query_speed.json
+done
+```
+
+#### Expected Performance Targets
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│  PERFORMANCE TARGETS (RTX 3060 6GB GPU)                          │
+├─────────────────────────────────────────────────────────────────┤
+│                                                                   │
+│  Database Building:                                              │
+│  ├─ Throughput: ≥ 2 proteins/minute                             │
+│  ├─ GPU memory: < 3 GB stable                                   │
+│  └─ 1,000 proteins: < 8.5 hours                                 │
+│                                                                   │
+│  Query Search:                                                   │
+│  ├─ Single query: < 30 seconds                                  │
+│  ├─ Multi-domain protein (3 domains): < 45 seconds              │
+│  └─ With TM-align validation: < 3 minutes                       │
+│                                                                   │
+│  Scalability:                                                    │
+│  ├─ Database size: Linear scaling up to 100K proteins           │
+│  └─ Query time: Sub-linear (FAISS index efficiency)             │
+│                                                                   │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+---
+
+### Benchmark 2: Sensitivity (Recall)
+
+#### Metrics
+
+```python
+sensitivity_metrics = {
+    # Primary Metrics
+    'true_positives': 'Number of correctly predicted interactions',
+    'false_negatives': 'Number of known interactions missed',
+    'recall': 'TP / (TP + FN)',  # Sensitivity
+    'coverage': 'Percentage of test proteins with ≥1 prediction',
+
+    # Threshold Analysis
+    'recall_at_conf_0_5': 'Recall at confidence threshold 0.5',
+    'recall_at_conf_0_7': 'Recall at confidence threshold 0.7',
+    'recall_at_conf_0_9': 'Recall at confidence threshold 0.9',
+
+    # Domain-Level Analysis
+    'ddi_recall': 'Recall for domain-domain interactions',
+    'ppi_recall': 'Recall for protein-protein interactions',
+
+    # Evidence Analysis
+    'recall_by_num_rosetta_stones': 'Recall vs. # of fusion evidences'
+}
+```
+
+#### Calculation
+
+```python
+def calculate_sensitivity(predictions, gold_standard):
+    """
+    Calculate sensitivity metrics for PPI predictions
+
+    Args:
+        predictions: List of predicted interactions
+                    [(query_protein, target_protein, confidence), ...]
+        gold_standard: Set of known interactions
+                      {(protein_A, protein_B), ...}
+
+    Returns:
+        dict: Sensitivity metrics
+    """
+    # Convert predictions to set
+    predicted_pairs = {
+        tuple(sorted([pred['query_protein'], pred['target_protein']]))
+        for pred in predictions
+    }
+
+    # Calculate True Positives and False Negatives
+    TP = len(predicted_pairs & gold_standard)
+    FN = len(gold_standard - predicted_pairs)
+
+    # Sensitivity (Recall)
+    recall = TP / (TP + FN) if (TP + FN) > 0 else 0
+
+    # Recall at different confidence thresholds
+    recall_at_thresholds = {}
+    for threshold in [0.5, 0.6, 0.7, 0.8, 0.9]:
+        high_conf_predictions = {
+            tuple(sorted([p['query_protein'], p['target_protein']]))
+            for p in predictions if p['confidence'] >= threshold
+        }
+        TP_thresh = len(high_conf_predictions & gold_standard)
+        recall_at_thresholds[f'recall_at_{threshold}'] = \
+            TP_thresh / len(gold_standard) if len(gold_standard) > 0 else 0
+
+    return {
+        'true_positives': TP,
+        'false_negatives': FN,
+        'recall': recall,
+        **recall_at_thresholds
+    }
+```
+
+#### Benchmark Protocol
+
+```python
+# Example benchmark script
+import json
+from pathlib import Path
+
+# 1. Load gold standard
+gold_standard = load_gold_standard('STRING_high_conf_ecoli.tsv')
+
+# 2. Run predictions on test set
+predictions = []
+for query_protein in test_proteins:
+    result = run_rosetta_search(query_protein, fusion_db)
+    predictions.extend(result['predictions'])
+
+# 3. Calculate sensitivity
+sensitivity = calculate_sensitivity(predictions, gold_standard)
+
+# 4. Generate recall curve
+confidence_thresholds = np.arange(0.5, 1.0, 0.05)
+recall_curve = [
+    calculate_sensitivity(
+        [p for p in predictions if p['confidence'] >= t],
+        gold_standard
+    )['recall']
+    for t in confidence_thresholds
+]
+
+# 5. Save results
+results = {
+    'sensitivity_metrics': sensitivity,
+    'recall_curve': {
+        'thresholds': confidence_thresholds.tolist(),
+        'recall': recall_curve
+    }
+}
+
+with open('sensitivity_benchmark.json', 'w') as f:
+    json.dump(results, f, indent=2)
+```
+
+#### Expected Performance Targets
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│  SENSITIVITY TARGETS                                             │
+├─────────────────────────────────────────────────────────────────┤
+│                                                                   │
+│  Overall Recall:                                                 │
+│  ├─ All predictions: ≥ 40%                                       │
+│  ├─ Confidence ≥ 0.7: ≥ 25%                                      │
+│  └─ Confidence ≥ 0.9: ≥ 10%                                      │
+│                                                                   │
+│  Coverage:                                                       │
+│  ├─ Proteins with ≥1 prediction: ≥ 60%                          │
+│  └─ Known interactions with evidence: ≥ 80%                     │
+│                                                                   │
+│  Organism-Specific:                                              │
+│  ├─ E. coli: Higher recall (more fusion data)                   │
+│  ├─ Yeast: Moderate recall                                      │
+│  └─ Human: Lower recall (complex proteome)                      │
+│                                                                   │
+│  Notes:                                                          │
+│  • Rosetta Stone method is conservative (high precision)         │
+│  • Recall limited by fusion protein availability                 │
+│  • Multi-domain proteins have higher recall                      │
+│                                                                   │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+---
+
+### Benchmark 3: Accuracy (Precision)
+
+#### Metrics
+
+```python
+accuracy_metrics = {
+    # Primary Metrics
+    'true_positives': 'Number of correctly predicted interactions',
+    'false_positives': 'Number of incorrect predictions',
+    'precision': 'TP / (TP + FP)',  # Positive Predictive Value
+    'false_discovery_rate': 'FP / (TP + FP)',  # 1 - Precision
+
+    # Threshold Analysis
+    'precision_at_conf_0_5': 'Precision at confidence threshold 0.5',
+    'precision_at_conf_0_7': 'Precision at confidence threshold 0.7',
+    'precision_at_conf_0_9': 'Precision at confidence threshold 0.9',
+
+    # Combined Metrics
+    'f1_score': '2 * (Precision * Recall) / (Precision + Recall)',
+    'f2_score': 'F-score with β=2 (emphasizes recall)',
+
+    # Advanced Metrics
+    'auprc': 'Area Under Precision-Recall Curve',
+    'auroc': 'Area Under ROC Curve'
+}
+```
+
+#### Calculation
+
+```python
+def calculate_accuracy(predictions, gold_standard, negative_set):
+    """
+    Calculate accuracy metrics for PPI predictions
+
+    Args:
+        predictions: List of predicted interactions with confidence scores
+        gold_standard: Set of known true interactions
+        negative_set: Set of known non-interactions or random pairs
+
+    Returns:
+        dict: Accuracy metrics
+    """
+    from sklearn.metrics import (
+        precision_recall_curve,
+        auc,
+        roc_auc_score,
+        f1_score
+    )
+
+    # Prepare binary labels
+    predicted_pairs = {
+        tuple(sorted([pred['query_protein'], pred['target_protein']])):
+        pred['confidence']
+        for pred in predictions
+    }
+
+    # True Positives and False Positives
+    TP = len(set(predicted_pairs.keys()) & gold_standard)
+    FP = len(set(predicted_pairs.keys()) - gold_standard)
+
+    # Precision
+    precision = TP / (TP + FP) if (TP + FP) > 0 else 0
+
+    # False Discovery Rate
+    fdr = FP / (TP + FP) if (TP + FP) > 0 else 0
+
+    # Precision at different thresholds
+    precision_at_thresholds = {}
+    for threshold in [0.5, 0.6, 0.7, 0.8, 0.9]:
+        high_conf_predictions = {
+            pair for pair, conf in predicted_pairs.items()
+            if conf >= threshold
+        }
+        TP_thresh = len(high_conf_predictions & gold_standard)
+        FP_thresh = len(high_conf_predictions - gold_standard)
+        precision_at_thresholds[f'precision_at_{threshold}'] = \
+            TP_thresh / (TP_thresh + FP_thresh) if (TP_thresh + FP_thresh) > 0 else 0
+
+    # Calculate F1 score
+    recall = TP / len(gold_standard) if len(gold_standard) > 0 else 0
+    f1 = 2 * (precision * recall) / (precision + recall) if (precision + recall) > 0 else 0
+
+    # Precision-Recall curve
+    all_pairs = list(gold_standard | negative_set)
+    y_true = [1 if pair in gold_standard else 0 for pair in all_pairs]
+    y_scores = [predicted_pairs.get(pair, 0) for pair in all_pairs]
+
+    precision_curve, recall_curve, _ = precision_recall_curve(y_true, y_scores)
+    auprc = auc(recall_curve, precision_curve)
+
+    # ROC-AUC
+    try:
+        auroc = roc_auc_score(y_true, y_scores)
+    except:
+        auroc = None
+
+    return {
+        'true_positives': TP,
+        'false_positives': FP,
+        'precision': precision,
+        'false_discovery_rate': fdr,
+        'f1_score': f1,
+        'auprc': auprc,
+        'auroc': auroc,
+        **precision_at_thresholds
+    }
+```
+
+#### Benchmark Protocol
+
+```python
+# Example benchmark script
+import numpy as np
+import matplotlib.pyplot as plt
+from sklearn.metrics import precision_recall_curve, auc
+
+# 1. Load datasets
+gold_standard = load_gold_standard('STRING_high_conf.tsv')
+negative_set = generate_negative_set(gold_standard, ratio=10)
+
+# 2. Run predictions
+predictions = run_benchmark_predictions(test_proteins, fusion_db)
+
+# 3. Calculate accuracy
+accuracy = calculate_accuracy(predictions, gold_standard, negative_set)
+
+# 4. Generate precision-recall curve
+confidence_thresholds = np.arange(0.5, 1.0, 0.05)
+precision_curve = []
+recall_curve = []
+
+for threshold in confidence_thresholds:
+    filtered_predictions = [
+        p for p in predictions if p['confidence'] >= threshold
+    ]
+    sens = calculate_sensitivity(filtered_predictions, gold_standard)
+    acc = calculate_accuracy(filtered_predictions, gold_standard, negative_set)
+
+    precision_curve.append(acc['precision'])
+    recall_curve.append(sens['recall'])
+
+# 5. Plot
+plt.figure(figsize=(8, 6))
+plt.plot(recall_curve, precision_curve, marker='o')
+plt.xlabel('Recall (Sensitivity)')
+plt.ylabel('Precision (PPV)')
+plt.title('Rosetta Stone PPI Prediction: Precision-Recall Curve')
+plt.grid(True)
+plt.savefig('precision_recall_curve.png', dpi=300)
+
+# 6. Save results
+results = {
+    'accuracy_metrics': accuracy,
+    'pr_curve': {
+        'thresholds': confidence_thresholds.tolist(),
+        'precision': precision_curve,
+        'recall': recall_curve,
+        'auc': auc(recall_curve, precision_curve)
+    }
+}
+
+with open('accuracy_benchmark.json', 'w') as f:
+    json.dump(results, f, indent=2)
+```
+
+#### Expected Performance Targets
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│  ACCURACY TARGETS                                                │
+├─────────────────────────────────────────────────────────────────┤
+│                                                                   │
+│  Overall Precision:                                              │
+│  ├─ All predictions: ≥ 50%                                       │
+│  ├─ Confidence ≥ 0.7: ≥ 65%                                      │
+│  └─ Confidence ≥ 0.9: ≥ 80%                                      │
+│                                                                   │
+│  False Discovery Rate:                                           │
+│  ├─ All predictions: ≤ 50%                                       │
+│  ├─ Confidence ≥ 0.7: ≤ 35%                                      │
+│  └─ Confidence ≥ 0.9: ≤ 20%                                      │
+│                                                                   │
+│  Combined Metrics:                                               │
+│  ├─ F1 Score: ≥ 0.40                                            │
+│  ├─ AUPRC: ≥ 0.50                                               │
+│  └─ AUROC: ≥ 0.70                                               │
+│                                                                   │
+│  Comparison to Random:                                           │
+│  ├─ Random baseline precision: ~0.05 (1:20 pos:neg ratio)       │
+│  └─ Expected enrichment: ≥ 10x over random                      │
+│                                                                   │
+│  Notes:                                                          │
+│  • Rosetta Stone method favors precision over recall             │
+│  • High-confidence predictions should be highly accurate         │
+│  • Promiscuity filter improves precision                         │
+│                                                                   │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+---
+
+### Benchmark 4: Comprehensive Evaluation
+
+#### Combined Metrics
+
+```python
+comprehensive_metrics = {
+    # Trade-off Analysis
+    'precision_at_50_recall': 'Precision when recall = 50%',
+    'recall_at_80_precision': 'Recall when precision = 80%',
+
+    # Quality Metrics
+    'top10_precision': 'Precision of top 10 predictions per query',
+    'top50_precision': 'Precision of top 50 predictions per query',
+    'top100_precision': 'Precision of top 100 predictions per query',
+
+    # Evidence-Based Analysis
+    'precision_by_num_rosetta_stones': {
+        '1_stone': 'Precision for predictions with 1 Rosetta Stone',
+        '2-4_stones': 'Precision for 2-4 Rosetta Stones',
+        '5+_stones': 'Precision for 5+ Rosetta Stones'
+    },
+
+    # Domain-Level Metrics
+    'ddi_precision': 'Precision for domain-domain interactions',
+    'ppi_precision': 'Precision for protein-protein interactions',
+
+    # Biological Validation
+    'go_term_enrichment': 'Interacting proteins share GO terms',
+    'pathway_cooccurrence': 'Interacting proteins in same pathway',
+    'coexpression_correlation': 'Gene expression correlation'
+}
+```
+
+#### Full Benchmark Suite
+
+```bash
+# Run comprehensive benchmark
+python benchmark_rosetta.py \
+    --fusion-db fusion_db/ \
+    --test-proteins test_set.txt \
+    --gold-standard STRING_ecoli_high_conf.tsv \
+    --negative-ratio 10 \
+    --output-dir benchmark_results/ \
+    --confidence-thresholds 0.5,0.6,0.7,0.8,0.9 \
+    --plot-curves \
+    --verbose
+
+# Expected output structure:
+# benchmark_results/
+# ├── speed_metrics.json
+# ├── sensitivity_metrics.json
+# ├── accuracy_metrics.json
+# ├── comprehensive_metrics.json
+# ├── precision_recall_curve.png
+# ├── roc_curve.png
+# ├── confidence_distribution.png
+# └── benchmark_report.md
+```
+
+---
+
+### Comparison to Baseline Methods
+
+Compare Rosetta Stone performance against:
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│  BASELINE COMPARISON                                             │
+├─────────────────────────────────────────────────────────────────┤
+│                                                                   │
+│  1. Random Baseline                                              │
+│     • Random pairing of proteins                                 │
+│     • Expected precision: ~0.05 (1:20 ratio)                     │
+│     • Provides lower bound                                       │
+│                                                                   │
+│  2. Sequence-Based Methods                                       │
+│     • BLAST all-vs-all                                           │
+│     • Sequence homology network                                  │
+│     • Domain co-occurrence                                       │
+│                                                                   │
+│  3. Structure-Based Methods                                      │
+│     • Structural similarity clustering                           │
+│     • TM-align all-vs-all (expensive)                            │
+│                                                                   │
+│  4. Gene Fusion Methods                                          │
+│     • Traditional Rosetta Stone (sequence-based)                 │
+│     • Our method (structure-based) should outperform             │
+│                                                                   │
+│  5. Machine Learning Methods                                     │
+│     • STRING combined score                                      │
+│     • AlphaFold-Multimer confidence                              │
+│     • Deep learning PPI predictors                               │
+│                                                                   │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+---
+
+### Benchmark Script Template
+
+```python
+#!/usr/bin/env python3
+"""
+Rosetta Stone PPI Benchmark Suite
+
+Usage:
+    python benchmark_rosetta.py --config benchmark_config.yaml
+"""
+
+import json
+import time
+import numpy as np
+from pathlib import Path
+from dataclasses import dataclass
+from typing import List, Dict, Set, Tuple
+
+@dataclass
+class BenchmarkConfig:
+    fusion_db_path: Path
+    test_proteins: List[Path]
+    gold_standard: Set[Tuple[str, str]]
+    negative_set: Set[Tuple[str, str]]
+    output_dir: Path
+    confidence_thresholds: List[float]
+
+class RosettaBenchmark:
+    def __init__(self, config: BenchmarkConfig):
+        self.config = config
+        self.results = {
+            'speed': {},
+            'sensitivity': {},
+            'accuracy': {},
+            'comprehensive': {}
+        }
+
+    def run_speed_benchmark(self):
+        """Measure speed performance"""
+        print("Running speed benchmark...")
+
+        start_time = time.time()
+
+        # Test query search time
+        query_times = []
+        for query_protein in self.config.test_proteins[:100]:
+            query_start = time.time()
+            predictions = self.run_query(query_protein)
+            query_times.append(time.time() - query_start)
+
+        self.results['speed'] = {
+            'avg_query_time': np.mean(query_times),
+            'std_query_time': np.std(query_times),
+            'median_query_time': np.median(query_times),
+            'min_query_time': np.min(query_times),
+            'max_query_time': np.max(query_times),
+            'total_time': time.time() - start_time
+        }
+
+    def run_sensitivity_benchmark(self):
+        """Measure sensitivity (recall)"""
+        print("Running sensitivity benchmark...")
+
+        # Run predictions
+        all_predictions = []
+        for query_protein in self.config.test_proteins:
+            predictions = self.run_query(query_protein)
+            all_predictions.extend(predictions)
+
+        # Calculate sensitivity
+        self.results['sensitivity'] = calculate_sensitivity(
+            all_predictions,
+            self.config.gold_standard
+        )
+
+    def run_accuracy_benchmark(self):
+        """Measure accuracy (precision)"""
+        print("Running accuracy benchmark...")
+
+        # Run predictions
+        all_predictions = []
+        for query_protein in self.config.test_proteins:
+            predictions = self.run_query(query_protein)
+            all_predictions.extend(predictions)
+
+        # Calculate accuracy
+        self.results['accuracy'] = calculate_accuracy(
+            all_predictions,
+            self.config.gold_standard,
+            self.config.negative_set
+        )
+
+    def generate_report(self):
+        """Generate markdown report"""
+        report = f"""# Rosetta Stone PPI Benchmark Report
+
+## Speed Performance
+- Average query time: {self.results['speed']['avg_query_time']:.2f}s
+- Median query time: {self.results['speed']['median_query_time']:.2f}s
+
+## Sensitivity (Recall)
+- Overall recall: {self.results['sensitivity']['recall']:.3f}
+- Recall at confidence ≥ 0.7: {self.results['sensitivity']['recall_at_0.7']:.3f}
+
+## Accuracy (Precision)
+- Overall precision: {self.results['accuracy']['precision']:.3f}
+- Precision at confidence ≥ 0.7: {self.results['accuracy']['precision_at_0.7']:.3f}
+- F1 Score: {self.results['accuracy']['f1_score']:.3f}
+- AUPRC: {self.results['accuracy']['auprc']:.3f}
+
+## Summary
+The Rosetta Stone method achieves {'PASS' if self.results['accuracy']['precision'] >= 0.5 else 'FAIL'}
+based on minimum precision threshold of 0.5.
+"""
+
+        output_path = self.config.output_dir / 'benchmark_report.md'
+        output_path.write_text(report)
+        print(f"Report saved to {output_path}")
+
+if __name__ == '__main__':
+    # Load configuration
+    config = BenchmarkConfig(
+        fusion_db_path=Path('fusion_db/'),
+        test_proteins=[Path(f) for f in Path('test_proteins/').glob('*.pdb')],
+        gold_standard=load_gold_standard('STRING_high_conf.tsv'),
+        negative_set=generate_negative_set(),
+        output_dir=Path('benchmark_results/'),
+        confidence_thresholds=[0.5, 0.6, 0.7, 0.8, 0.9]
+    )
+
+    # Run benchmark
+    benchmark = RosettaBenchmark(config)
+    benchmark.run_speed_benchmark()
+    benchmark.run_sensitivity_benchmark()
+    benchmark.run_accuracy_benchmark()
+    benchmark.generate_report()
+
+    print("Benchmark complete!")
+```
+
+---
+
+### Suggested Benchmark Timeline
+
+```
+Week 1: Dataset Preparation
+├─ Day 1-2: Download and prepare gold standard datasets
+├─ Day 3-4: Construct test sets (positive + negative)
+└─ Day 5: Build fusion database for test organism
+
+Week 2: Speed Benchmarking
+├─ Day 1-2: Measure database build performance
+├─ Day 3-4: Measure query search performance
+└─ Day 5: Analyze and optimize bottlenecks
+
+Week 3: Accuracy Benchmarking
+├─ Day 1-2: Run predictions on test set
+├─ Day 3-4: Calculate precision and recall metrics
+└─ Day 5: Generate precision-recall curves
+
+Week 4: Analysis and Reporting
+├─ Day 1-2: Compare to baseline methods
+├─ Day 3-4: Analyze failure cases
+└─ Day 5: Write benchmark report
 ```
 
 ---
