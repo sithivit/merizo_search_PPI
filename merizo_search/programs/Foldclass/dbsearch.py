@@ -214,7 +214,13 @@ def dbsearch_faiss(queries: list[dict], target_dict: dict, tmp: str, network: Fo
                 topk: int, mincov: float, mincos: float, mintm: float, fastmode: bool,
                 device: torch.device, inputs_are_ca: bool=False,
                 search_batchsize:int=262144, search_type='IP', pdb_chain:str="A",
-                skip_tmalign=False, score_corrections=None):
+                skip_tmalign=False, score_corrections=None,
+                # NEW FILTER PARAMETERS
+                filter_db_path: str=None,
+                filter_taxonomy: int=None,
+                filter_cath_fold: str=None,
+                filter_confidence: str=None,
+                filter_min_globularity: float=None):
 
 
     import faiss
@@ -283,7 +289,39 @@ def dbsearch_faiss(queries: list[dict], target_dict: dict, tmp: str, network: Fo
 
     # memory-map the db
     dbmm = db_memmap(filename=dbfname, shape=(dbinfo['DB_SIZE'], dbinfo['DB_DIM']))
-    dbi = db_iterator(dbmm, search_batchsize)
+
+    # NEW: Apply filters if specified
+    index_mapper = None
+    if filter_db_path and any([filter_taxonomy, filter_cath_fold,
+                                filter_confidence, filter_min_globularity]):
+        from .filter_query import FilterQuery
+        from .filtered_iterator import db_iterator_filtered, FilteredIndexMapper
+
+        logger.info("Applying pre-filters...")
+        fq = FilterQuery(filter_db_path)
+
+        # Get filtered indices
+        filtered_indices = fq.filter_combined(
+            taxonomy_id=filter_taxonomy,
+            cath_fold=filter_cath_fold,
+            confidence=filter_confidence,
+            min_globularity=filter_min_globularity
+        )
+
+        logger.info(f"Filter matched {len(filtered_indices)} / {dbinfo['DB_SIZE']} domains")
+        reduction_pct = 100 * (1 - len(filtered_indices) / dbinfo['DB_SIZE'])
+        logger.info(f"Reduction: {reduction_pct:.1f}%")
+
+        # Create filtered iterator
+        dbi = db_iterator_filtered(dbmm, filtered_indices, search_batchsize)
+
+        # Create index mapper for results
+        index_mapper = FilteredIndexMapper(filtered_indices)
+
+        fq.close()
+    else:
+        # Original behavior - search all domains
+        dbi = db_iterator(dbmm, search_batchsize)
 
     logger.info('DB iterator using batchsize of '+str(search_batchsize))
 
@@ -330,6 +368,10 @@ def dbsearch_faiss(queries: list[dict], target_dict: dict, tmp: str, network: Fo
         device = torch.device('cpu')
 
     D, I = knn_exact_faiss(query_embeddings.cpu(), dbi, topk, metric_type=mt, device=device)
+
+    # NEW: Map filtered indices back to original if needed
+    if index_mapper is not None:
+        I = index_mapper.to_original(I)
 
     if faiss.is_similarity_metric(mt):
         D_mask = np.where(D>=mincos)
@@ -493,7 +535,10 @@ def dbsearch_faiss(queries: list[dict], target_dict: dict, tmp: str, network: Fo
 
 def run_dbsearch(inputs: list[str], db_name: str, tmp: str, device: torch.device, topk: int, fastmode: bool,
                  threads: int, mincos: float, mintm: float, mincov: float, inputs_are_ca: bool=False,
-                 search_batchsize:int=262144, search_type='IP', pdb_chain: str=None, skip_tmalign:bool=False) -> None:
+                 search_batchsize:int=262144, search_type='IP', pdb_chain: str=None, skip_tmalign:bool=False,
+                 # NEW FILTER PARAMETERS
+                 filter_db_path: str=None, filter_taxonomy: int=None, filter_cath_fold: str=None,
+                 filter_confidence: str=None, filter_min_globularity: float=None) -> None:
 
 
     if len(inputs) == 0:
@@ -531,7 +576,13 @@ def run_dbsearch(inputs: list[str], db_name: str, tmp: str, device: torch.device
                               target_dict=target_db,
                               search_batchsize=search_batchsize,
                               search_type=search_type,
-                              skip_tmalign=skip_tmalign
+                              skip_tmalign=skip_tmalign,
+                              # NEW: Pass filter parameters
+                              filter_db_path=filter_db_path,
+                              filter_taxonomy=filter_taxonomy,
+                              filter_cath_fold=filter_cath_fold,
+                              filter_confidence=filter_confidence,
+                              filter_min_globularity=filter_min_globularity
                             )
     else:
         # if pdb_chain:
