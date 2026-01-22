@@ -83,9 +83,22 @@ def create_pairlist_filter_db(domain_to_idx: Dict[str, int], db_config_path: str
                     try:
                         metadata = ast.literal_eval(metadata_str)
                     except Exception as e:
+                        # Log error but continue - don't crash
                         print(f"Warning: Failed to parse metadata for index {domain_idx}: {e}")
+                        # print(f"  Raw string: {metadata_str!r}") # Uncomment for verbose debug
                         continue
                         
+                    # Safe extraction of density
+                    try:
+                        raw_dens = metadata.get('dens', 0.0)
+                        if isinstance(raw_dens, str):
+                            # Handle cases like 'XXX_PACKING_DENSITY'
+                             dens = None
+                        else:
+                             dens = float(raw_dens)
+                    except (ValueError, TypeError):
+                        dens = None
+
                     # Extract fields (logic copied from metadata_extractor.py)
                     batch_data.append((
                         domain_idx,
@@ -94,7 +107,7 @@ def create_pairlist_filter_db(domain_to_idx: Dict[str, int], db_config_path: str
                         metadata.get('taxsci', ''),
                         metadata.get('cath', '') if metadata.get('cath') != 'NA' else '',
                         metadata.get('cnsl', ''),  # confidence level
-                        float(metadata.get('dens', 0.0)) if metadata.get('dens') else None,  # globularity/density
+                        dens,  # Safe density
                         metadata.get('cl', ''),  # architecture class
                         len(metadata.get('rr', '').replace('_', '-').split('-')) if metadata.get('rr') else None,  # domain length approximation
                         metadata_str
