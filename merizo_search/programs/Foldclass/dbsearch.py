@@ -292,21 +292,47 @@ def dbsearch_faiss(queries: list[dict], target_dict: dict, tmp: str, network: Fo
 
     # NEW: Apply filters if specified
     index_mapper = None
-    if filter_db_path and any([filter_taxonomy, filter_cath_fold,
-                                filter_confidence, filter_min_globularity]):
+
+    # Check for pre-defined index list in database config
+    base_indices = None
+    if 'INDEX_LIST_FILE' in dbinfo:
+        index_list_path = os.path.join(db_dir, dbinfo['INDEX_LIST_FILE'])
+        if os.path.exists(index_list_path):
+             logger.info(f"Loading filtered database index from {dbinfo['INDEX_LIST_FILE']}...")
+             with open(index_list_path, 'r') as f:
+                 base_indices = [int(line.strip()) for line in f]
+             logger.info(f"Restricted search to {len(base_indices)} domains")
+
+    filters_active = filter_db_path and any([filter_taxonomy, filter_cath_fold,
+                                filter_confidence, filter_min_globularity])
+
+    if filters_active or base_indices is not None:
         from .filter_query import FilterQuery
         from .filtered_iterator import db_iterator_filtered, FilteredIndexMapper
 
-        logger.info("Applying pre-filters...")
-        fq = FilterQuery(filter_db_path)
+        filtered_indices = None
 
-        # Get filtered indices
-        filtered_indices = fq.filter_combined(
-            taxonomy_id=filter_taxonomy,
-            cath_fold=filter_cath_fold,
-            confidence=filter_confidence,
-            min_globularity=filter_min_globularity
-        )
+        if filters_active:
+            logger.info("Applying pre-filters...")
+            fq = FilterQuery(filter_db_path)
+
+            # Get filtered indices
+            dynamic_indices = fq.filter_combined(
+                taxonomy_id=filter_taxonomy,
+                cath_fold=filter_cath_fold,
+                confidence=filter_confidence,
+                min_globularity=filter_min_globularity
+            )
+            fq.close()
+
+            if base_indices is not None:
+                # Intersect
+                base_set = set(base_indices)
+                filtered_indices = [i for i in dynamic_indices if i in base_set]
+            else:
+                filtered_indices = dynamic_indices
+        else:
+            filtered_indices = base_indices
 
         logger.info(f"Filter matched {len(filtered_indices)} / {dbinfo['DB_SIZE']} domains")
         reduction_pct = 100 * (1 - len(filtered_indices) / dbinfo['DB_SIZE'])
@@ -318,7 +344,6 @@ def dbsearch_faiss(queries: list[dict], target_dict: dict, tmp: str, network: Fo
         # Create index mapper for results
         index_mapper = FilteredIndexMapper(filtered_indices)
 
-        fq.close()
     else:
         # Original behavior - search all domains
         dbi = db_iterator(dbmm, search_batchsize)
