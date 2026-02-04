@@ -304,6 +304,19 @@ def easy_search(args):
     parser.add_argument("--conf_threshold", type=float, default=0.5, help="[For iteration mode] Controls the minimum confidence to accept for iteration move.")
     parser.add_argument("--pdb_chain", type=str, dest="pdb_chain", default="A",
                         help="Select which PDB Chain you are analysing. Defaut is chain A. You can provide a comma separated list if you can provide more than one input pdb")
+    
+    # Filter arguments
+    parser.add_argument('--filter-db', type=str, default=None,
+                        help='Path to filter database (built with build-filter-index)')
+    parser.add_argument('--filter-taxonomy', type=int, default=None,
+                        help='Filter by taxonomy ID (e.g., 9606 for human)')
+    parser.add_argument('--filter-cath', type=str, default=None,
+                        help='Filter by CATH fold (e.g., 3.40.50.300)')
+    parser.add_argument('--filter-confidence', type=str, default=None,
+                        choices=['high', 'medium'],
+                        help='Filter by confidence level')
+    parser.add_argument('--filter-min-globularity', type=float, default=None,
+                        help='Filter by minimum globularity score')
 
     args = parser.parse_args(args)
     tmp = munge_tmp_with_uuid(args.tmp)
@@ -404,7 +417,13 @@ def easy_search(args):
         pdb_chain=pdb_chains_for_search,
         search_batchsize=args.search_batchsize,
         search_type=args.search_metric,
-        skip_tmalign=False #args.multi_domain_search
+        skip_tmalign=False, #args.multi_domain_search
+        # Pass filter parameters
+        filter_db_path=args.filter_db,
+        filter_taxonomy=args.filter_taxonomy,
+        filter_cath_fold=args.filter_cath,
+        filter_confidence=args.filter_confidence,
+        filter_min_globularity=args.filter_min_globularity
     )
 
     write_search_results(results=search_results, output_file=search_output, format_list=output_fields, header=args.output_headers, metadata_json=args.metadata_json)

@@ -81,12 +81,36 @@ def create_pairlist_filter_db(domain_to_idx: Dict[str, int], db_config_path: str
                     domain_idx = batch_indices[idx_in_batch] # The original DB index
                     
                     try:
+                        # FIX: Handle unescaped quotes in taxsci field like "Amphilius_sp._"Ruvu""
+                        # This breaks standard JSON/Python dict parsing.
+                        # We blindly replace specific known patterns or use a regex if it gets complex.
+                        # Simple fix: if "Ruvu" appears inside the string, escape it? 
+                        # Better: Use json.loads if it was valid JSON, but it looks like Python dict string.
+                        
+                        # Attempt to fix the specific "Ruvu" case and similar unescaped quotes
+                        if 'sp._"' in metadata_str:
+                             metadata_str = metadata_str.replace('sp._"', 'sp._\\"').replace('""', '\\""')
+                             # This is hacky. A better way: replace ` "Ruvu"` with ` \"Ruvu\"`
+                             import re
+                             # Regex to find unescaped quotes inside values? Hard.
+                             # Let's try to just accept that if AST fails, we try to fix common culprits.
+                             pass
+                        
                         metadata = ast.literal_eval(metadata_str)
                     except Exception as e:
-                        # Log error but continue - don't crash
-                        print(f"Warning: Failed to parse metadata for index {domain_idx}: {e}")
-                        # print(f"  Raw string: {metadata_str!r}") # Uncomment for verbose debug
-                        continue
+                        # Retry with aggressive quote escaping for the specific "Ruvu" pattern seen in logs
+                        try:
+                            # The pattern seen: "taxsci": "Amphilius_sp._"Ruvu""
+                            # We want: "taxsci": "Amphilius_sp._\"Ruvu\""
+                            # We can replace `_" ` with `_\"` and `""` (at end) with `\""` contextually?
+                            # Let's try a directed replace for this specific scientific name pattern
+                             fixed_str = metadata_str.replace('._"', '._\\"').replace('""', '\\""')
+                             metadata = ast.literal_eval(fixed_str)
+                        except Exception:
+                            # Log error but continue - don't crash
+                            print(f"Warning: Failed to parse metadata for index {domain_idx}: {e}")
+                            # print(f"  Raw string: {metadata_str!r}") # Uncomment for verbose debug
+                            continue
                         
                     # Safe extraction of density
                     try:
