@@ -205,8 +205,8 @@ if [ -z "${METADATA_B}" ]; then
     error "Domain ${DOMAIN_B} not found in domain_summary file"
 fi
 
-# Extract taxonomy ID
-TAXONOMY_ID=$(echo "${METADATA_B}" | awk -F'\t' '{print $5}' | grep -o '[0-9]*' | head -1)
+# Extract taxonomy ID from column 13 (format: proteome-tax_id-9606-18_v4)
+TAXONOMY_ID=$(echo "${METADATA_B}" | awk -F'\t' '{print $13}' | sed 's/.*tax_id-\([0-9]*\)-.*/\1/')
 
 if [ -z "${TAXONOMY_ID}" ]; then
     log "  Warning: Could not determine taxonomy ID"
@@ -215,8 +215,8 @@ else
     log "  Taxonomy ID: ${TAXONOMY_ID}"
 fi
 
-# Extract CATH fold
-CATH_FOLD=$(echo "${METADATA_B}" | awk -F'\t' '{print $7}')
+# Extract CATH fold from column 14
+CATH_FOLD=$(echo "${METADATA_B}" | awk -F'\t' '{print $14}')
 log "  CATH fold (Domain B): ${CATH_FOLD}"
 log ""
 
