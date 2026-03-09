@@ -285,15 +285,13 @@ log "Step 6: Extracting candidate proteins..."
 CANDIDATE_DOMAINS="${PROTEIN_OUTPUT}/candidate_domains.txt"
 CANDIDATE_PROTEINS="${PROTEIN_OUTPUT}/candidate_proteins.txt"
 
-# Extract top domain IDs (skip self-hit)
+# Extract domain IDs, excluding all domains from the query protein itself
 tail -n +2 "${SEARCH_RESULTS}" | \
-    tail -n +2 | \
-    head -20 | \
+    grep -v "AF-${PROTEIN_ID}-" | \
     cut -f3 > "${CANDIDATE_DOMAINS}"
 
 # Extract protein IDs
-cat "${CANDIDATE_DOMAINS}" | \
-    sed 's/AF-\([^-]*\)-F1-model_v4.*/\1/' | \
+sed 's/AF-\([^-]*\)-F1-model_v4.*/\1/' "${CANDIDATE_DOMAINS}" | \
     sort -u > "${CANDIDATE_PROTEINS}"
 
 CANDIDATE_COUNT=$(wc -l < "${CANDIDATE_PROTEINS}")
@@ -356,12 +354,12 @@ SUMMARY="${PROTEIN_OUTPUT}/analysis_summary.txt"
 
     echo ""
     echo "=============================================="
-    echo "Candidate Interaction Partners (Top 20)"
+    echo "Candidate Interaction Partners"
     echo "=============================================="
     echo ""
 
     # Analyze each candidate protein
-    for protein in $(head -20 "${CANDIDATE_PROTEINS}"); do
+    for protein in $(cat "${CANDIDATE_PROTEINS}"); do
         # Count domains
         domain_count=$(grep "^AF-${protein}" "${DOMAIN_SUMMARY}" 2>/dev/null | wc -l || echo "?")
 
@@ -429,10 +427,14 @@ log "  Candidate domains:   ${CANDIDATE_DOMAINS}"
 log "  Candidate proteins:  ${CANDIDATE_PROTEINS}"
 log "  Analysis summary:    ${SUMMARY}"
 log ""
-log "Top 5 candidate proteins:"
+log "Top candidate proteins (up to 5):"
 head -5 "${CANDIDATE_PROTEINS}" | while read protein; do
     log "  - ${protein}"
 done
+TOTAL=$(wc -l < "${CANDIDATE_PROTEINS}")
+if [ "${TOTAL}" -gt 5 ]; then
+    log "  ... and $((TOTAL - 5)) more (see ${CANDIDATE_PROTEINS})"
+fi
 log ""
 log "Review the full analysis: cat ${SUMMARY}"
 log ""
