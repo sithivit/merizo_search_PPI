@@ -28,14 +28,17 @@ import argparse
 import csv
 import logging
 import os
+import random
 import re
 import shutil
+import ssl
 import subprocess
 import sys
 import tarfile
 import tempfile
 import urllib.request
 from collections import defaultdict
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 logging.basicConfig(
     level=logging.INFO,
@@ -88,7 +91,12 @@ def download_zhang_data(cache_dir: str) -> None:
 
     if not os.path.exists(tar_path):
         log.info(f"Downloading benchmark controls from {BENCHMARKS_URL} ...")
-        urllib.request.urlretrieve(BENCHMARKS_URL, tar_path)
+        ctx = ssl.create_default_context()
+        ctx.check_hostname = False
+        ctx.verify_mode = ssl.CERT_NONE
+        with urllib.request.urlopen(BENCHMARKS_URL, context=ctx) as resp, \
+                open(tar_path, 'wb') as fh:
+            shutil.copyfileobj(resp, fh)
         log.info(f"Downloaded: {os.path.getsize(tar_path) // 1024} KB")
 
     log.info("Extracting benchmarks.tar.gz ...")
@@ -226,13 +234,19 @@ def run_merizo_search(
         return None
 
 
-def parse_search_results(tsv_path: str, query_protein_id: str) -> dict:
+_TAXID_RE = re.compile(r'"taxid":\s*"(\d+)"')
+
+
+def parse_search_results(tsv_path: str, query_protein_id: str, taxid_filter: str = None) -> dict:
     """Parse search TSV (no header). Returns dict: target_protein_id -> max_tm.
 
     Self-hits filtered. Deduplicated by UniProt: keep highest max_tm per protein.
+    If taxid_filter is set (e.g. '9606'), only keep hits from that organism.
+    Taxid is read from the metadata JSON in the last column.
     """
     self_prefix = f"AF-{query_protein_id}-"
     best: dict = {}
+    COL_META = 12
 
     with open(tsv_path) as fh:
         for line in fh:
@@ -249,10 +263,43 @@ def parse_search_results(tsv_path: str, query_protein_id: str) -> dict:
                 max_tm = float(parts[COL_MAX_TM])
             except ValueError:
                 continue
+            if taxid_filter and len(parts) > COL_META:
+                m = _TAXID_RE.search(parts[COL_META])
+                if not m or m.group(1) != taxid_filter:
+                    continue
             if protein_id not in best or max_tm > best[protein_id]:
                 best[protein_id] = max_tm
 
     return best
+
+
+def _search_one_protein(protein_id, domain_b, search_cache_dir, pairlist_db,
+                        taxid, topk, tm_threshold, search_batchsize, force_rerun):
+    """Process a single protein in a thread. Returns (protein_id, hits_dict, status_msg)."""
+    cache_tsv = os.path.join(search_cache_dir, f"{protein_id}_search.tsv")
+
+    if os.path.exists(cache_tsv) and not force_rerun:
+        hits = parse_search_results(cache_tsv, protein_id, taxid_filter=taxid)
+        return protein_id, hits, f"cached: {len(hits)} hits (taxid={taxid or 'all'})"
+
+    with tempfile.TemporaryDirectory(prefix="bench_pdb_") as tmpdir:
+        pdb_path = os.path.join(tmpdir, f"{protein_id}.pdb")
+        if not extract_domain_b_pdb(domain_b, pairlist_db, pdb_path):
+            return protein_id, {}, "extract_failed"
+
+        log.info(f"  [{protein_id}] extraction OK — running merizo search (topk={topk}, mintm={tm_threshold})")
+        search_prefix = os.path.join(search_cache_dir, protein_id)
+        tsv_path = run_merizo_search(
+            pdb_path, pairlist_db, search_prefix,
+            search_batchsize, tm_threshold, topk,
+        )
+        if tsv_path is None:
+            return protein_id, {}, "search_failed"
+
+        if tsv_path != cache_tsv:
+            shutil.move(tsv_path, cache_tsv)
+        hits = parse_search_results(cache_tsv, protein_id, taxid_filter=taxid)
+        return protein_id, hits, f"search OK: {len(hits)} unique protein hits (taxid={taxid or 'all'})"
 
 
 def run_searches_for_proteins(
@@ -263,41 +310,37 @@ def run_searches_for_proteins(
     """Run/load searches for all proteins. Returns dict: protein_id -> {target_id: max_tm}."""
     search_results: dict = {}
     total = len(proteins_to_search)
+    workers = getattr(args, 'workers', 1)
 
-    for i, protein_id in enumerate(proteins_to_search, start=1):
+    def _submit(protein_id):
         domain_a, domain_b, pae = pair_list[protein_id]
-        cache_tsv = os.path.join(args.search_cache_dir, f"{protein_id}_search.tsv")
+        log.info(f"  extracting domain B: {domain_b}")
+        return _search_one_protein(
+            protein_id, domain_b,
+            args.search_cache_dir, args.pairlist_db, args.taxid,
+            args.topk, args.tm_threshold, args.search_batchsize, args.force_rerun,
+        )
 
-        log.info(f"[{i}/{total}] {protein_id}  domain_b={domain_b}")
-
-        if os.path.exists(cache_tsv) and not args.force_rerun:
-            hits = parse_search_results(cache_tsv, protein_id)
-            log.info(f"  cached: {len(hits)} hits")
-        else:
-            hits = {}
-            with tempfile.TemporaryDirectory(prefix="bench_pdb_") as tmpdir:
-                pdb_path = os.path.join(tmpdir, f"{protein_id}.pdb")
-                if not extract_domain_b_pdb(domain_b, args.pairlist_db, pdb_path):
-                    log.warning(f"  extract_failed — skipping {protein_id}")
-                    search_results[protein_id] = {}
-                    continue
-
-                search_prefix = os.path.join(args.search_cache_dir, protein_id)
-                tsv_path = run_merizo_search(
-                    pdb_path, args.pairlist_db, search_prefix,
-                    args.search_batchsize, args.tm_threshold, args.topk,
-                )
-                if tsv_path is None:
-                    log.warning(f"  search_failed — skipping {protein_id}")
-                    search_results[protein_id] = {}
-                    continue
-
-                if tsv_path != cache_tsv:
-                    shutil.move(tsv_path, cache_tsv)
-                hits = parse_search_results(cache_tsv, protein_id)
-                log.info(f"  searched: {len(hits)} hits")
-
-        search_results[protein_id] = hits
+    if workers == 1:
+        for i, protein_id in enumerate(proteins_to_search, start=1):
+            domain_a, domain_b, pae = pair_list[protein_id]
+            log.info(f"[{i}/{total}] {protein_id}  domain_b={domain_b}")
+            _, hits, msg = _submit(protein_id)
+            log.info(f"  {msg}")
+            search_results[protein_id] = hits
+    else:
+        log.info(f"Running searches with {workers} parallel workers...")
+        with ThreadPoolExecutor(max_workers=workers) as executor:
+            futures = {
+                executor.submit(_submit, pid): pid
+                for pid in proteins_to_search
+            }
+            completed = 0
+            for future in as_completed(futures):
+                completed += 1
+                protein_id, hits, msg = future.result()
+                log.info(f"[{completed}/{total}] {protein_id}  {msg}")
+                search_results[protein_id] = hits
 
     return search_results
 
@@ -342,8 +385,10 @@ def compute_weighted_pr(
     if P == 0:
         return [], [], 0.0
 
-    # Merge and sort descending by score
+    # Merge, shuffle first to break ties randomly (prevents list-order bias),
+    # then sort descending by score
     all_pairs = [(s, 1) for s in pos_scores] + [(s, 0) for s in neg_scores]
+    random.shuffle(all_pairs)
     all_pairs.sort(key=lambda x: x[0], reverse=True)
 
     precisions, recalls = [], []
@@ -465,6 +510,7 @@ def write_summary_txt(
         w(f"  pairlist_db:     {args.pairlist_db}")
         w(f"  controls:        {args.controls_path}")
         w(f"  tm_threshold:    {args.tm_threshold}  (search; also default sweep start)")
+        w(f"  taxid_filter:    {args.taxid or 'none (all organisms)'}")
         w(f"  topk:            {args.topk}")
         w(f"  wp:              {args.wp}  (positive pair weight, 1:1000 SNR)")
         w(f"  limit:           {args.limit}")
@@ -609,12 +655,19 @@ def parse_args():
                         help="Top-K hits per search (default: 500)")
     parser.add_argument("--wp", type=float, default=0.01,
                         help="Positive pair weight for P-R computation (default: 0.01)")
+    parser.add_argument("--taxid", type=str, default="9606",
+                        help="Filter search results to this NCBI taxid (default: 9606 = human). "
+                             "Set to empty string to disable filtering.")
     parser.add_argument("--force-rerun", action="store_true", dest="force_rerun",
                         help="Ignore cached search results and rerun searches")
     parser.add_argument("--download-only", action="store_true", dest="download_only",
                         help="Only download benchmark data and exit")
     parser.add_argument("--search-batchsize", type=int, default=2097152, dest="search_batchsize",
                         help="Merizo search batch size (default: 2097152)")
+    parser.add_argument("--workers", type=int, default=1,
+                        help="Number of parallel search workers (default: 1). "
+                             "Each worker runs extract+search for one protein concurrently. "
+                             "Set to 4-8 depending on available CPU cores and RAM.")
     return parser.parse_args()
 
 

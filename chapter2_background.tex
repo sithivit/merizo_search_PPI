@@ -1,0 +1,388 @@
+% ============================================================
+% Chapter 2: Background and Related Work
+% ============================================================
+\chapter{Background and Related Work}
+\label{ch:background}
+
+This chapter provides the biological and computational context for the project.
+It begins with an overview of protein--protein interactions and their significance, then surveys existing computational approaches to PPI prediction and their respective limitations.
+The enabling technologies underpinning this work are described in detail: AlphaFold2 and the expansion of structural data, the TED dataset that provides domain-level decompositions at scale, and the Merizo-search pipeline that combines domain segmentation with fast structural search.
+The chapter concludes by discussing the principle of structural homology transfer and its gap in PPI prediction, and by introducing the evaluation framework used to assess the proposed approach.
+
+
+% ------------------------------------------------------------
+% 2.1 Protein-Protein Interactions
+% ------------------------------------------------------------
+\section{Protein--Protein Interactions}
+\label{sec:bg-ppi}
+
+Proteins carry out the vast majority of functions within a living cell, and they rarely do so in isolation.
+Almost all cellular processes depend on proteins physically associating with one another to form functional complexes.
+These associations, known as protein--protein interactions (PPIs), range from highly stable multi-subunit assemblies such as ribosomes and proteasomes to transient signalling events where two proteins bind briefly to transmit a signal before dissociating~\cite{zhang2025ppi}.
+The set of all PPIs within an organism is referred to as its interactome.
+
+Mapping the interactome is of considerable practical interest.
+In drug discovery, identifying the binding partners of a disease-associated protein can reveal new therapeutic targets.
+Many cancers, for example, are driven by aberrant signalling cascades in which specific kinase--substrate interactions become constitutively active~\cite{zhang2025ppi}.
+PPI maps also support functional annotation: if a protein of unknown function consistently interacts with proteins involved in DNA repair, it is likely to play a role in that pathway as well, a reasoning strategy commonly referred to as guilt by association.
+
+The scale of the problem is substantial.
+The human proteome contains approximately 20,000 proteins, giving rise to roughly $2 \times 10^{8}$ possible pairwise interactions.
+Only a fraction of these have been experimentally characterised.
+The most comprehensive human interactome studies to date have mapped fewer than 10\% of estimated interactions, and the overlap between independent experimental datasets is often surprisingly low~\cite{zhang2025ppi}.
+
+Several high-throughput experimental techniques exist for detecting PPIs, each with its own strengths and limitations.
+Yeast two-hybrid (Y2H) screening tests binary interactions by fusing two proteins of interest to the DNA-binding and activation domains of a transcription factor.
+If the two proteins interact, the transcription factor is reconstituted and a reporter gene is activated.
+Y2H is scalable and has been used to generate large-scale interactome maps, but it suffers from a high false-positive rate, is biased towards interactions that occur in the nucleus, and does not reliably detect interactions involving membrane-associated proteins.
+
+Affinity purification coupled with mass spectrometry (AP-MS) takes a different approach.
+A bait protein is expressed with an affinity tag, used to pull down associated proteins from cell lysate, and the co-purified proteins are identified by mass spectrometry.
+AP-MS captures proteins that are part of the same complex, but it cannot easily distinguish direct physical contacts from indirect associations mediated through other proteins in the complex.
+It is also relatively expensive on a per-bait basis.
+
+Other methods such as cross-linking mass spectrometry (XL-MS) provide structural distance constraints between interacting residues, but their throughput remains low compared to Y2H and AP-MS.
+
+A recurring issue across experimental methods is reproducibility.
+Independent studies using the same technique on the same organism often show limited overlap in their reported interactions, reflecting both biological context-dependence (interactions may depend on cell type, conditions, or post-translational modifications) and technical noise inherent to each assay.
+This limited reproducibility underscores the need for computational approaches that can complement and guide experimental efforts.
+
+
+% ------------------------------------------------------------
+% 2.2 Computational PPI Prediction
+% ------------------------------------------------------------
+\section{Computational PPI Prediction}
+\label{sec:bg-comp-ppi}
+
+Given the limitations of experimental approaches, computational methods for predicting PPIs have been an active area of research for over two decades.
+This section reviews the main families of methods, highlighting their respective strengths and the trade-offs that motivate the approach taken in this project.
+
+\subsection{Sequence-Based Co-evolution Methods}
+
+The earliest computational approaches to PPI prediction exploited the observation that interacting proteins tend to co-evolve.
+If a mutation in protein A disrupts its binding interface with protein B, a compensatory mutation in protein B may restore the interaction.
+Over evolutionary time, these correlated mutations leave a statistical signature in multiple sequence alignments (MSAs) that can be detected computationally.
+
+Methods such as direct coupling analysis (DCA) and its extensions have been used to predict both intra-protein residue contacts and inter-protein interaction interfaces.
+More recent tools such as EVcouplings extend this framework to predict which proteins are likely to interact based on the strength of inter-protein co-evolutionary signal.
+
+The principal limitation of co-evolution methods is their dependence on deep MSAs.
+For a co-evolutionary signal to be detectable, hundreds or thousands of homologous sequence pairs must be available across diverse species.
+Many protein families, particularly in eukaryotes, lack sufficient sequence diversity for reliable co-evolutionary analysis.
+This restricts the applicability of these methods to well-studied, highly conserved protein families.
+
+\subsection{Machine-Learning Classifiers}
+
+A second family of approaches frames PPI prediction as a supervised classification problem.
+Given a pair of proteins, a classifier is trained to predict whether they interact based on a set of features.
+Commonly used features include sequence similarity to known interacting pairs, shared Gene Ontology annotations, co-expression across tissues or conditions, domain composition, and subcellular localisation.
+
+Classifiers ranging from random forests and support vector machines to deep neural networks have been applied to PPI prediction with varying degrees of success.
+The main advantage of these methods is their flexibility: any informative feature can in principle be incorporated.
+
+However, supervised classifiers face several challenges.
+Their performance is heavily dependent on the quality and coverage of the training data.
+If the training set is biased towards well-studied proteins or certain interaction types, the classifier will inherit those biases.
+Furthermore, classifiers trained on one organism often do not generalise well to others, because the features they rely on (such as co-expression patterns or GO annotations) are organism-specific.
+
+\subsection{Physics-Based Docking}
+
+Molecular docking simulates the physical process of two proteins binding to each other.
+Programs such as ZDOCK, ClusPro, and HADDOCK sample possible orientations and conformations of two protein structures, scoring each configuration using energy functions that account for shape complementarity, electrostatics, and desolvation.
+
+Docking can provide detailed structural models of how two proteins interact, which is valuable for understanding binding mechanisms and for drug design.
+However, docking is computationally expensive, typically requiring minutes to hours per protein pair depending on the resolution of the search.
+At proteome scale, where $2 \times 10^{8}$ pairs would need to be evaluated, brute-force docking is not feasible.
+Docking also requires accurate input structures for both partners, which until recently were available only for the subset of proteins with experimentally solved structures in the Protein Data Bank (PDB).
+
+\subsection{Structure-Based Approaches}
+
+A fourth family of methods uses three-dimensional structural information to predict interactions.
+These approaches are most directly relevant to the present project.
+
+Template-based methods search for known complex structures in the PDB in which homologs of the two query proteins appear together.
+If protein A has a homolog A$'$ and protein B has a homolog B$'$, and A$'$--B$'$ are observed in a co-crystal structure, then A--B is predicted to interact.
+The main limitation is coverage: the PDB contains experimental structures for only a small fraction of known proteins, and even fewer solved complex structures.
+
+More recently, AlphaFold-Multimer has been developed to predict the structure of protein complexes directly from sequence.
+Zhang et~al.~\cite{zhang2025ppi} used AlphaFold-Multimer as one signal in a multi-feature ensemble for human interactome prediction, alongside co-evolutionary and other features.
+While powerful, AlphaFold-Multimer is computationally expensive (requiring GPU time for each pair) and therefore impractical for exhaustive proteome-wide screening.
+
+The approach taken in this project differs from both template-based methods and AlphaFold-Multimer.
+Rather than searching for solved complexes or predicting complex structures from scratch, it uses fast structural search at the domain level to identify proteins that share structurally similar interface domains with known interacting pairs.
+This sidesteps the need for expensive pairwise computation and is not limited to the small set of experimentally solved complexes.
+However, it relies on a principle, structural homology transfer, that while well established for function annotation has not been systematically evaluated as a standalone PPI prediction signal.
+Sections~\ref{sec:bg-homology} and~\ref{sec:bg-eval} discuss this principle and the evaluation framework in more detail.
+
+
+% ------------------------------------------------------------
+% 2.3 AlphaFold2 and the Structural Biology Revolution
+% ------------------------------------------------------------
+\section{AlphaFold2 and the Structural Biology Revolution}
+\label{sec:bg-alphafold}
+
+The approach described in this project would not have been feasible five years ago.
+Its viability depends on the availability of reliable protein structure predictions at a scale that was unimaginable before 2021.
+This section describes the breakthrough that made this possible.
+
+\subsection{The Protein Structure Prediction Problem}
+
+Determining the three-dimensional structure of a protein has historically required experimental techniques such as X-ray crystallography, cryo-electron microscopy (cryo-EM), or nuclear magnetic resonance (NMR) spectroscopy.
+Each of these methods is time-consuming, expensive, and not universally applicable: some proteins resist crystallisation, others are too small for cryo-EM, and NMR is limited to relatively small proteins.
+As a result, the Protein Data Bank (PDB), which archives experimentally determined structures, contained roughly 180,000 entries by 2020, covering only a small fraction of known protein sequences.
+
+Computational structure prediction from amino acid sequence alone had been pursued for decades, with incremental progress tracked through the biennial CASP (Critical Assessment of protein Structure Prediction) competition.
+Prior to 2020, even the best methods produced predictions that were often too inaccurate for detailed structural analysis.
+
+\subsection{The AlphaFold2 Breakthrough}
+
+AlphaFold2, developed by DeepMind, transformed this landscape~\cite{alphafold2}.
+At CASP14 in 2020, AlphaFold2 achieved a median GDT-TS score of approximately 92 (out of 100), far exceeding all other methods and approaching the accuracy of experimental techniques.
+The system was published in 2021 and its code and model weights were made freely available.
+
+The AlphaFold2 architecture takes as input a multiple sequence alignment and pairwise features derived from sequence databases, processes them through a series of ``Evoformer'' blocks that iteratively refine MSA and pair representations, and produces a 3D structure through a structure module that uses invariant point attention (IPA) to ensure the output is equivariant to rotations and translations.
+The same IPA mechanism is later used in Merizo for domain segmentation (see Section~\ref{sec:bg-merizo-seg}).
+
+A key output alongside the predicted structure is pLDDT (predicted local distance difference test), a per-residue confidence score ranging from 0 to 100.
+Regions with pLDDT above 70 are generally considered reliable, while regions below 50 are likely to be disordered or poorly predicted.
+This confidence metric is important for downstream applications, including this project, as it allows unreliable regions to be excluded from structural analysis.
+
+\subsection{The AlphaFold Protein Structure Database}
+
+Following the publication of AlphaFold2, DeepMind and EMBL-EBI released the AlphaFold Protein Structure Database (AFDB).
+The initial release in 2021 covered the complete human proteome (approximately 350,000 protein structures).
+By 2022, the database had been expanded to cover over 200 million predicted structures across hundreds of organisms, representing nearly all known protein sequences in UniProt.
+
+This expansion is what makes structure-based proteome-scale analysis feasible.
+Before AFDB, structural methods were limited to the roughly 180,000 proteins with experimental structures in the PDB.
+With AFDB, reliable structural data is available for essentially every known protein, enabling approaches that compare protein structures across entire proteomes rather than being restricted to a small, biased subset.
+
+For this project, the availability of 200 million predicted structures is the foundational enabler.
+It means that structural homology search can be applied not just to well-studied model organisms but across the full breadth of sequenced life, and that domain-level structural comparisons can be performed at a scale that would have been impossible using experimental structures alone.
+
+
+% ------------------------------------------------------------
+% 2.4 The TED and UniProt Datasets
+% ------------------------------------------------------------
+\section{The TED and UniProt Datasets}
+\label{sec:bg-ted}
+
+While AlphaFold2 provides predicted structures for individual proteins, many downstream analyses require reasoning at the level of structural domains rather than whole proteins.
+This is particularly true for PPI prediction, since interactions are often mediated by specific domains rather than by the entire protein surface.
+The TED dataset provides the domain-level decomposition that this project requires.
+
+\subsection{UniProt as the Protein Catalogue}
+
+UniProt (Universal Protein Resource) is the most comprehensive and widely used database of protein sequence and functional annotation.
+Each protein entry in UniProt is assigned a unique accession number (e.g.\ Q9Y6K1), and the database provides curated information on protein function, subcellular localisation, post-translational modifications, and known interactions.
+UniProt accession numbers serve as the standard identifiers used throughout the AlphaFold database, the TED dataset, and the benchmark used in this project.
+
+\subsection{The Encyclopaedia of Domains (TED)}
+
+TED (The Encyclopaedia of Domains) is a large-scale dataset published by Lau et~al.\ in 2024~\cite{ted_dataset}.
+It provides a systematic decomposition of all AlphaFold-predicted structures into their constituent structural domains.
+The segmentation was performed using Merizo (described in Section~\ref{sec:bg-merizo-seg}), applied to the entire AFDB.
+
+The resulting dataset catalogues approximately 365 million structural domains across all organisms represented in AFDB.
+For each domain, TED records the parent protein, the residue boundaries of the domain within the protein, structural classification information (CATH fold assignment where available), and quality metrics derived from the AlphaFold prediction (such as mean pLDDT confidence).
+
+\subsection{The Domain Pair List}
+
+Beyond individual domain annotations, TED identifies intra-protein domain--domain contacts.
+These are pairs of domains within the same protein whose structures are in physical contact, defined by distance thresholds between their respective residues.
+The full pair list contains over 200 million domain pair entries.
+
+For this project, the domain pair list is the primary source of interaction templates.
+The reasoning is as follows: if Domain A and Domain B are in contact within the same protein, then Domain B serves as an interface domain.
+Proteins containing structural homologs of Domain B may therefore also be capable of interacting with Domain A or its homologs.
+Each entry in the pair list is thus treated as a candidate interaction template that can be used to generate PPI predictions via structural search.
+
+\subsection{Domain Metadata}
+
+Each domain in the TED dataset carries associated metadata that was extracted and indexed as part of this project.
+The metadata fields include:
+
+\begin{itemize}
+    \item \textbf{Taxonomy ID:} The NCBI taxonomy identifier of the source organism (e.g.\ 9606 for \textit{Homo sapiens}).
+    \item \textbf{CATH fold classification:} The four-level CATH hierarchy (Class, Architecture, Topology, Homologous superfamily) for domains that could be classified. CATH is discussed further in Section~\ref{sec:bg-homology}.
+    \item \textbf{Model confidence:} Derived from the mean pLDDT of the domain's residues. Domains with low confidence are likely to represent disordered regions and are less suitable for structural comparison.
+    \item \textbf{Globularity score:} A measure of how compact and globular the domain structure is. Non-globular domains (extended coils, for example) are less likely to form well-defined binding interfaces.
+\end{itemize}
+
+This metadata is stored in the SQLite index constructed as part of this project (described in Chapter~\ref{ch:design}), enabling queries to be filtered by organism, structural family, or quality criteria.
+
+
+% ------------------------------------------------------------
+% 2.5 Merizo-search
+% ------------------------------------------------------------
+\section{Merizo-search}
+\label{sec:bg-merizo-search}
+
+Merizo-search is the structural domain search tool on which the PPI prediction pipeline is built~\cite{merizo_search}.
+It was developed at UCL and combines two components: Merizo, which segments protein structures into domains, and Foldclass, which encodes domains as embeddings and performs fast structural similarity search.
+This section describes each component in detail.
+
+\subsection{Merizo: Domain Segmentation}
+\label{sec:bg-merizo-seg}
+
+Merizo is a deep-learning model for protein domain segmentation~\cite{merizo}.
+Given a protein structure as input (specifically, the coordinates of its C$\alpha$ backbone atoms), Merizo assigns each residue to one of $k$ domains or labels it as a linker region between domains.
+
+The model is built on invariant point attention (IPA), the same attention mechanism used in the structure module of AlphaFold2.
+IPA operates in three-dimensional space and is designed to be invariant to rigid-body transformations: rotating or translating the input protein structure does not change the model's output.
+This property is essential for a domain segmentation tool, since the biological domain boundaries of a protein are intrinsic to its fold and should not depend on the arbitrary orientation in which the structure happens to be represented.
+
+Merizo also incorporates pLDDT-based filtering.
+Residues with low AlphaFold confidence scores (typically below 50) are treated as likely disordered and are excluded from domain assignment.
+This ensures that only well-structured regions of the protein are decomposed into domains, which is important because disordered regions lack the stable tertiary structure needed for meaningful structural comparison.
+
+In terms of performance, Merizo processes a typical multi-domain protein in approximately 50 milliseconds, making it fast enough to be applied to entire proteomes.
+It was used to generate the domain decompositions in the TED dataset.
+
+\subsection{Foldclass: Structural Search}
+\label{sec:bg-foldclass}
+
+Foldclass is a structural comparison engine that enables fast retrieval of structurally similar domains from a precomputed database~\cite{merizo_search}.
+It operates in two stages: an embedding-based retrieval step for speed, followed by a structural alignment step for accuracy.
+
+\paragraph{Embedding Generation.}
+Each domain structure is encoded as a fixed-length 128-dimensional vector using an equivariant graph neural network (EGNN).
+The EGNN takes as input the C$\alpha$ backbone coordinates of the domain, constructs a graph where each residue is a node and edges connect spatially proximate residues, and applies message-passing layers that update node representations while respecting the equivariance constraint (the output transforms predictably under rotations and translations of the input).
+The final node representations are pooled into a single 128-dimensional embedding vector, which is then L2-normalised.
+
+This embedding captures the global fold of the domain in a compact representation.
+Domains with similar three-dimensional structures will have similar embeddings, regardless of differences in sequence.
+
+\paragraph{Cosine Similarity Search.}
+Given a query domain, its embedding is compared against all embeddings in the database using cosine similarity.
+Because the embeddings are L2-normalised, cosine similarity reduces to a dot product, which can be computed very efficiently.
+The search returns the top-$k$ most similar database entries based on embedding distance.
+
+For the full TED database (365 million domains), this embedding search takes approximately 100 milliseconds using optimised batch computation, making it practical to search the entire database for each query.
+
+\paragraph{TM-align Re-ranking.}
+The top candidates from the embedding search are then re-ranked using TM-align~\cite{tmalign}, a structural alignment algorithm that computes the TM-score between two protein structures.
+TM-score ranges from 0 to 1 and is normalised by the length of the target protein, making it size-independent.
+A TM-score above 0.5 generally indicates that two structures share the same fold, while scores above 0.7 suggest high structural similarity.
+
+TM-align is more accurate than embedding-based comparison but also more expensive, typically taking 1 to 5 seconds per pair depending on protein size.
+By applying it only to the top-$k$ candidates (typically $k = 100$ or $k = 200$) rather than to all 365 million database entries, Foldclass achieves both high accuracy and practical runtime.
+
+\paragraph{Database Format.}
+Foldclass databases consist of several binary files: a file of precomputed L2-normalised embeddings (128 $\times$ float32 per domain), index files for C$\alpha$ coordinates and sequences (used during TM-align re-ranking), and a JSON configuration file that specifies file paths and database size.
+All binary files are accessed via memory-mapped I/O, meaning the operating system loads data on demand rather than reading entire files into memory.
+This is critical for the full-scale TED database, which exceeds 700~GB in total size.
+
+
+% ------------------------------------------------------------
+% 2.6 Structural Homology Transfer
+% ------------------------------------------------------------
+\section{Structural Homology Transfer}
+\label{sec:bg-homology}
+
+The PPI prediction approach proposed in this project rests on a well-established principle in structural biology: proteins that share similar three-dimensional structures often share related functions.
+This section discusses the basis for this principle, its established applications, and the specific gap that this project addresses.
+
+\subsection{Structure as a Proxy for Function}
+
+Protein structure is far more conserved than protein sequence over evolutionary time.
+Two proteins may share less than 20\% sequence identity yet adopt nearly identical folds and perform similar biochemical functions.
+This is because the three-dimensional arrangement of a protein's backbone and side chains is what determines its ability to bind substrates, catalyse reactions, and interact with other molecules.
+Mutations that preserve the overall fold (and thus the function) are tolerated, while those that disrupt it are selected against.
+
+Structural classification databases exploit this conservation.
+CATH~\cite{ted_dataset} organises protein domains into a four-level hierarchy: Class (secondary structure composition), Architecture (overall shape), Topology (fold), and Homologous superfamily (common evolutionary origin).
+Domains within the same CATH superfamily are inferred to descend from a common ancestor and frequently share related functions.
+SCOP (Structural Classification of Proteins) provides a similar classification using a different methodology.
+
+Structural homology transfer is the practice of inferring the function of an uncharacterised protein by identifying structurally similar proteins with known function.
+If a protein of unknown function is found to share the same fold as a well-characterised enzyme, it is reasonable to hypothesise that the unknown protein may perform a similar catalytic role.
+Tools such as Dali, FATCAT, and now Foldclass are routinely used for this purpose.
+
+\subsection{Application to PPI Prediction}
+
+This project extends the principle of structural homology transfer from function annotation to interaction prediction.
+The reasoning is analogous: if two domains share a similar three-dimensional structure, they may share similar binding properties.
+Specifically, if Domain B in protein Y mediates an interaction with Domain A, and Domain B$'$ in protein X is structurally similar to Domain B, then protein X may also be capable of interacting with Domain A (or proteins containing structural homologs of Domain A) through the same interface.
+
+This idea is intuitive and has been discussed in the literature in the context of template-based docking, where known complex structures are used as templates for modelling new interactions.
+However, template-based methods are limited to the small set of experimentally solved complex structures in the PDB.
+What distinguishes the approach in this project is that it does not require solved complex structures at all.
+Instead, it uses intra-protein domain--domain contacts from the TED dataset as interaction templates and performs structural search at the domain level using Foldclass.
+This allows the approach to operate over the full 365-million-domain TED database rather than being restricted to the PDB.
+
+\subsection{Limitations of the Approach}
+
+Structural homology transfer is not infallible, and several failure modes should be acknowledged.
+
+First, structural similarity does not guarantee functional equivalence in all cases.
+Convergent evolution can produce similar folds in proteins that have no evolutionary relationship and perform entirely different functions.
+Paralogs (proteins that arose from gene duplication within the same organism) may have diverged in their interaction partners even though their structures remain similar.
+
+Second, many biologically important PPIs are mediated not by well-structured domain surfaces but by intrinsically disordered regions (IDRs).
+IDRs lack stable tertiary structure and cannot be meaningfully compared using structural similarity tools.
+Any interaction that depends on a disordered interface will be invisible to the approach used in this project.
+
+Third, structural homology transfer as used here is a single signal.
+Real PPI prediction systems, such as the ensemble described by Zhang et~al.~\cite{zhang2025ppi}, typically combine multiple complementary signals including co-evolution, co-expression, subcellular co-localisation, and structural evidence.
+A purely structure-based approach is unlikely to achieve the same coverage as a multi-signal ensemble.
+One of the goals of this project is to characterise precisely where structural homology transfer succeeds and where it falls short, in order to understand its potential role as one component of a larger prediction pipeline.
+
+
+% ------------------------------------------------------------
+% 2.7 Evaluation Framework
+% ------------------------------------------------------------
+\section{Evaluation Framework}
+\label{sec:bg-eval}
+
+Evaluating a PPI prediction method requires a reliable benchmark of known interacting and non-interacting protein pairs, together with metrics that reflect the practical setting in which the method would be deployed.
+This section describes the benchmark and evaluation framework adopted in this project.
+
+\subsection{The Zhang et al.\ Benchmark}
+
+The evaluation in this project uses the benchmark introduced by Zhang et~al.~\cite{zhang2025ppi}, which is to date the most recent and comprehensive benchmark for human PPI prediction.
+
+The positive set consists of 3,000 high-confidence PPI pairs.
+These were drawn from the intersection of three independent interaction databases: STRING (which aggregates evidence from multiple sources including text mining, co-expression, and experimental data), BioGRID (which curates experimentally determined interactions from the literature), and UniProt (which provides expert-curated annotations).
+By requiring that an interaction be supported by all three databases, the benchmark substantially reduces the risk of including false positives.
+
+The negative set consists of 30,000 random protein pairs.
+These are pairs of human proteins sampled uniformly at random, with the assumption that the vast majority of random pairs do not interact.
+While a small number of these ``negatives'' may in fact be true interactions that have not yet been discovered, the expected contamination rate is low given the sparsity of the real interactome.
+
+\subsection{The Problem with Standard Precision--Recall}
+
+The benchmark contains positives and negatives in a 1:10 ratio (3,000 positives to 30,000 negatives).
+However, in a real proteome-wide screen, the ratio of interacting to non-interacting pairs is approximately 1:1,000 or even lower.
+The human proteome has roughly $2 \times 10^{8}$ possible pairwise interactions, of which perhaps 200,000 to 600,000 are estimated to be genuine.
+
+This mismatch between the benchmark ratio and the real-world ratio has important consequences for evaluation.
+A method that achieves 50\% precision on the benchmark (where 1 in 10 pairs is a true positive) would achieve far lower precision in a real screen (where only 1 in 1,000 pairs is a true positive).
+Standard precision--recall curves computed on the benchmark would therefore overestimate the method's real-world utility.
+
+\subsection{Weighted Precision--Recall}
+
+To address this, Zhang et~al.\ proposed a weighted precision--recall framework that simulates the real-world class imbalance without requiring a benchmark of millions of pairs.
+The key idea is to assign a weight $w_p = 0.01$ to positive examples, effectively down-weighting each positive to reflect the fact that in a real screen, positives are 100 times rarer relative to negatives than they appear in the benchmark.
+
+Concretely, the weighted precision at a given score threshold $t$ is defined as:
+\[
+\text{Precision}_w(t) = \frac{w_p \cdot TP(t)}{w_p \cdot TP(t) + FP(t)}
+\]
+where $TP(t)$ is the number of true positives above the threshold and $FP(t)$ is the number of false positives above the threshold.
+The weighted recall is defined as usual:
+\[
+\text{Recall}_w(t) = \frac{TP(t)}{TP(t) + FN(t)}
+\]
+
+The primary metric used in this project is the area under the weighted precision--recall curve (AUCPR), which summarises the overall ranking quality of the method under realistic class imbalance.
+In addition, precision is reported at specific recall thresholds of 0.1, 0.2, and 0.5 to characterise performance at different levels of coverage.
+
+\subsection{TM-Score Threshold Sweep}
+
+In the proposed pipeline, the TM-score from the Foldclass re-ranking step serves as the primary scoring signal for each candidate interaction.
+Higher TM-scores indicate greater structural similarity between the query interface domain and the candidate's domain, and thus stronger evidence for the interaction.
+
+To characterise the trade-off between precision and recall, this project evaluates performance across a sweep of TM-score thresholds from 0.3 to 0.9 in increments of 0.1.
+At low thresholds, more candidates are accepted (higher recall but lower precision); at high thresholds, only highly similar structures are accepted (higher precision but lower recall).
+The threshold sweep allows identification of the operating point that best balances these competing objectives, and provides insight into how much structural similarity is required for the homology transfer hypothesis to hold.

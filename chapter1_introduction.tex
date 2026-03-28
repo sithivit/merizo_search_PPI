@@ -1,0 +1,156 @@
+% ============================================================
+% Chapter 1: Introduction
+% ============================================================
+\chapter{Introduction}
+\label{ch:introduction}
+
+% ------------------------------------------------------------
+% 1.1 Problem Domain
+% ------------------------------------------------------------
+\section{Problem Domain}
+\label{sec:problem-domain}
+
+Proteins rarely function in isolation.
+Nearly every biological process---from DNA replication and signal transduction to immune response---depends on proteins physically binding to one another to form functional complexes.
+Understanding which proteins interact, and through which structural interfaces, is therefore one of the central problems in molecular biology.
+A complete map of protein--protein interactions (PPIs) for a given organism would be of considerable value: it could reveal new drug targets, explain disease mechanisms, and clarify how cellular machinery is assembled and regulated~\cite{zhang2025ppi}.
+
+Despite its importance, the protein interaction landscape remains largely uncharted.
+The human proteome alone contains approximately 20{,}000 proteins, giving rise to roughly $2 \times 10^{8}$ possible pairwise interactions.
+Experimental techniques for detecting PPIs, such as yeast two-hybrid (Y2H) screening and affinity-purification mass spectrometry (AP-MS), can identify interactions at scale, but they are noisy, biased towards certain interaction types, and do not cover the full proteome~\cite{zhang2025ppi}.
+High-throughput screens typically achieve only partial coverage: the most comprehensive human interactome studies to date have mapped fewer than 10\% of estimated interactions, and the overlap between independent experimental datasets is often surprisingly low, reflecting both biological complexity and technical limitations.
+Exhaustively testing the full space of pairwise interactions experimentally is simply not feasible with current technology.
+
+Computational methods offer a way to narrow this search space.
+Over the past two decades, a range of approaches have been developed, including sequence-based co-evolution analysis, machine-learning classifiers trained on known interactions, and physics-based docking simulations.
+Each comes with significant trade-offs.
+Co-evolution methods require deep multiple sequence alignments that are unavailable for many protein families.
+Docking is computationally expensive and demands high-quality input structures.
+Supervised learning approaches depend heavily on the coverage and quality of their training data, and risk learning dataset-specific biases rather than generalisable interaction signals.
+
+A fundamental shift occurred in 2021 with the release of AlphaFold2~\cite{alphafold2}.
+AlphaFold2 predicts protein tertiary structure from sequence alone with near-experimental accuracy, and the AlphaFold Protein Structure Database (AFDB) has since been expanded to cover over 200~million predicted structures across hundreds of organisms~\cite{ted_dataset}.
+This unprecedented availability of reliable structural data creates a new opportunity: the possibility of inferring protein interactions at proteome scale using structural information alone, without requiring expensive experimental assays or deep evolutionary signals.
+
+The principle that underlies this opportunity is \emph{structural homology transfer}.
+If a domain in protein~$X$ is structurally very similar to a domain in protein~$Y$, and protein~$Y$ is known to interact with protein~$Z$ through that domain, then protein~$X$ may also interact with~$Z$ (or proteins structurally similar to~$Z$) via an analogous binding interface.
+This principle is well established for transferring functional annotations between proteins, but its systematic application to large-scale PPI prediction remains relatively underexplored.
+This project investigates whether domain-level structural homology, captured through fast structural search, can serve as a useful signal for predicting protein--protein interactions at proteome scale.
+
+
+% ------------------------------------------------------------
+% 1.2 Benefits and Use Cases
+% ------------------------------------------------------------
+\section{Benefits and Use Cases}
+\label{sec:benefits}
+
+A scalable, structure-based method for predicting PPIs would have broad applications across biology and medicine.
+In drug discovery, identifying novel interaction partners for a protein of interest can reveal previously unknown targets for therapeutic intervention.
+Many diseases arise from the disruption or dysregulation of specific protein interactions---for example, oncogenic signalling often involves aberrant binding between kinases and their substrates.
+A computational pipeline that can rapidly screen for candidate interaction partners would allow researchers to prioritise which interactions to validate experimentally, substantially reducing the time and cost of target identification.
+
+Beyond drug discovery, PPI prediction supports the broader goal of mapping complete cellular interaction networks.
+Such maps are essential for systems biology, where understanding how perturbations propagate through a network can explain complex phenotypes, predict drug side effects, and guide the design of combination therapies.
+Current experimental interactome maps are incomplete and organism-specific; a computational approach that generalises across organisms via structural similarity could help fill gaps in species where experimental data is sparse.
+
+The approach taken in this project is particularly well suited to these use cases because it operates at the \emph{domain level} rather than the whole-protein level.
+Many proteins are multi-domain, and different domains within the same protein can mediate distinct interactions.
+By decomposing proteins into their constituent domains and searching for structural homologs of specific interface domains, the pipeline can make more fine-grained predictions than whole-protein methods, and can naturally handle the common biological scenario where a single protein participates in multiple, structurally distinct interactions.
+
+Furthermore, the infrastructure developed in this project---including a SQLite metadata index and a filtered embedding iterator---enables queries to be scoped by organism and structural family.
+This makes the system practical for targeted biological investigations, such as searching for all candidate interaction partners of a particular human kinase domain, rather than requiring a full proteome-wide screen every time.
+
+
+% ------------------------------------------------------------
+% 1.3 Project Aim
+% ------------------------------------------------------------
+\section{Project Aim}
+\label{sec:project-aim}
+
+The overarching aim of this project is to investigate whether domain-level structural homology, as captured by Merizo-search~\cite{merizo_search} and the TED domain pair list~\cite{ted_dataset}, provides a useful signal for predicting protein--protein interactions at proteome scale.
+In doing so, the project seeks to extend Merizo-search---a fast domain segmentation and structural similarity search tool developed at UCL---with a novel application it was not originally designed for: using structural search results to infer biological interactions between proteins.
+
+Two complementary aims support this central investigation:
+\begin{itemize}
+    \item To develop practical infrastructure (filtering, metadata indexing, and efficient iteration) that makes structural homology search usable for targeted biological queries over a database of more than 200~million domains.
+    \item To critically assess the strengths and limitations of a purely structure-based approach to PPI prediction, identifying where complementary signals such as co-expression or co-evolution data would be needed to improve prediction quality.
+\end{itemize}
+
+
+% ------------------------------------------------------------
+% 1.4 Project Objectives
+% ------------------------------------------------------------
+\section{Project Objectives}
+\label{sec:project-objectives}
+
+Following the distinction drawn in the project guidelines, the aims above describe the overall purpose of the project, while the following objectives are specific, measurable deliverables:
+
+\begin{enumerate}
+    \item \textbf{Implement a PPI prediction pipeline} based on domain structural homology search, using Merizo-search and the TED pair list as the underlying infrastructure. The pipeline accepts a query protein, decomposes it into domains, identifies known domain--domain contacts from the TED dataset, and uses Foldclass to search for structural homologs of the interface domain. Proteins containing high-scoring homologs are returned as candidate interaction partners.
+
+    \item \textbf{Build a searchable, filtered database} derived from the TED pair list, enabling queries to be scoped by organism (taxonomy~ID) and structural classification (CATH family). This involves constructing a SQLite metadata index storing per-domain information (taxonomy~ID, CATH classification, model confidence, domain density) and implementing a filtered embedding iterator that loads only the relevant subset of embeddings into memory during search.
+
+    \item \textbf{Evaluate the approach against the Zhang et~al.\ benchmark}~\cite{zhang2025ppi}, reporting area under the weighted precision--recall curve (AUCPR) and precision at recall thresholds of 0.1, 0.2, and~0.5 across a range of TM-score cutoffs. The benchmark comprises 3{,}000 high-confidence positive PPI pairs and 30{,}000 random negative pairs drawn from the intersection of STRING, BioGRID, and UniProt.
+
+    \item \textbf{Analyse the limitations of the method}, particularly failure cases where structural homology alone is insufficient to predict biologically meaningful interactions---for example, paralogs with different interaction partners, convergent fold evolution, and intrinsically disordered interfaces.
+\end{enumerate}
+
+
+% ------------------------------------------------------------
+% 1.5 Project Approach
+% ------------------------------------------------------------
+\section{Project Approach}
+\label{sec:project-approach}
+
+This project extends Merizo-search~\cite{merizo_search}, a structural domain search tool that combines two components.
+The first is \textbf{Merizo}~\cite{merizo}, a deep-learning model that segments a protein structure into its constituent domains using invariant point attention.
+The second is \textbf{Foldclass}~\cite{merizo_search}, a structural comparison engine that encodes each domain as a fixed-length neural-network embedding using an equivariant graph neural network (EGNN).
+Given a query domain, Foldclass searches a precomputed database of embeddings via cosine similarity to rapidly retrieve structurally similar candidates, which are then re-ranked using TM-align~\cite{tmalign} for precise structural alignment scoring.
+Together, the two components make it practical to query databases containing hundreds of millions of domains within minutes.
+
+The core idea of the project is as follows.
+Consider a protein containing two domains, Domain~$A$ and Domain~$B$, where Domain~$B$ serves as the interface domain responsible for mediating a binding interaction.
+If a structural search identifies another protein whose domain~$B'$ is a close structural homolog of Domain~$B$, then that protein becomes a candidate for interacting with partners of Domain~$A$ via the same binding interface.
+More formally, if Domain~$B$ is known to interact with Domain~$A$, and $B'$ is a structural homolog of~$B$, then~$B'$ is hypothesised to also interact with~$A$ (or structural homologs of~$A$).
+This hypothesis---structural homology transfer applied to domain--domain contacts---forms the foundation of the proposed pipeline.
+
+Domain pairing information, that is, which domains are predicted to form interaction interfaces, is derived from the TED (The Encyclopaedia of Domains) dataset~\cite{ted_dataset}.
+TED decomposes AlphaFold-predicted structures into domains and identifies intra-protein domain--domain contacts.
+Each such contact pair is treated as a potential interaction template: Domain~$B$ (the interface domain) is used as the search query, and proteins containing high-scoring structural homologs of Domain~$B$ are returned as predicted interaction partners.
+To enable this search at scale, the TED pair list---comprising over 200~million domain entries---was transformed into a Foldclass-compatible indexed database.
+
+Beyond the core search pipeline, several features were implemented to improve practical usability.
+A metadata index was constructed using SQLite, storing per-domain information including taxonomy~ID, CATH fold classification, model confidence, and domain density.
+This index supports query-time filtering, allowing results to be restricted to a specific organism or structural family.
+A filtered iterator was also implemented to load only the relevant subset of embeddings into memory during search, reducing both runtime and memory consumption when operating on targeted subsets of the database.
+
+The system was evaluated against the benchmark of Zhang et~al.~\cite{zhang2025ppi} (\textit{Science}, 2025), which provides 3{,}000 high-confidence positive PPI pairs and 30{,}000 random negative pairs.
+Evaluation follows a weighted precision--recall framework with a positive weight of~$0.01$, reflecting the approximately 1:1{,}000 signal-to-noise ratio expected in proteome-wide screening.
+A sweep of TM-score thresholds was conducted to characterise the trade-off between precision and recall, and a critical analysis identifies the principal failure modes of the approach.
+Full details of the evaluation methodology are given in Chapter~\ref{ch:evaluation}.
+
+
+% ------------------------------------------------------------
+% 1.6 Report Structure
+% ------------------------------------------------------------
+\section{Report Structure}
+\label{sec:report-structure}
+
+The remainder of this report is organised as follows.
+
+\textbf{Chapter~\ref{ch:background}: Background and Related Work} provides the biological and computational context for this project.
+It introduces protein--protein interactions and their significance, surveys existing computational approaches to PPI prediction and their limitations, and describes the enabling technologies underpinning this work: AlphaFold2, the TED dataset, domain-based protein representation through CATH classification, and the Merizo-search pipeline.
+The chapter concludes with a discussion of structural homology transfer as an established technique in function annotation and its gap in PPI prediction, and introduces the evaluation framework used in this project.
+
+\textbf{Chapter~\ref{ch:design}: System Design and Implementation} describes the architecture of the PPI prediction pipeline in detail.
+It covers the construction of the Foldclass-compatible database from the TED pair list, the design of the search pipeline (domain extraction, embedding search, TM-score re-ranking), the SQLite metadata index schema, the filtered embedding iterator, and the end-to-end workflow.
+The chapter also discusses key design decisions and the alternatives that were considered.
+
+\textbf{Chapter~\ref{ch:evaluation}: Evaluation Methodology} presents the evaluation strategy.
+It describes the Zhang et~al.\ benchmark, explains why standard precision--recall is insufficient for proteome-wide screening, introduces the weighted precision--recall framework, and details the metrics and TM-score threshold sweep design used in the evaluation.
+
+\textbf{Chapter~\ref{ch:results}: Results and Analysis} reports and analyses the experimental results.
+It presents benchmark performance at the default TM threshold, the threshold sweep results, and case studies of where the method succeeds and fails.
+It includes a critical failure analysis examining cases where structural homology is insufficient, validates the filtering infrastructure, and compares performance against a baseline.
+
+\textbf{Chapter~\ref{ch:conclusions}: Conclusions} summarises the project's contributions, addresses each objective from this chapter, critically evaluates whether structural homology alone is sufficient for PPI prediction, discusses limitations and future work, and offers reflections on the project.

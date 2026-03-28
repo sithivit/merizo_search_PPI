@@ -1,0 +1,85 @@
+% ============================================================
+% 1.X  Project Approach
+% ============================================================
+\subsection{Project Approach}
+\label{sec:intro-approach}
+
+In the following section I discuss the various phases of the project and the approach taken at each phase.
+The project followed an iterative research-driven methodology, where each phase informed and refined the next.
+Any technologies, tools, or design decisions adopted during a particular phase are stated and justified.
+
+\subsubsection{Planning Phase -- Literature Review and Feasibility}
+
+The first phase of the project focused on understanding the problem domain and assessing whether structural homology transfer was a viable signal for PPI prediction.
+I began by conducting a literature review of existing computational PPI prediction methods, including co-evolution-based approaches, machine-learning classifiers, and physics-based docking, to understand their respective strengths and limitations.
+This review established that while structural similarity had been used extensively for function annotation, its systematic application to interaction prediction at proteome scale remained underexplored.
+
+I then studied the key tools and datasets that would underpin the project: the AlphaFold Protein Structure Database~\cite{alphafold2}, the TED dataset and its domain pair list~\cite{ted_dataset}, and the Merizo-search pipeline comprising Merizo~\cite{merizo} for domain segmentation and Foldclass~\cite{merizo_search} for structural search.
+Understanding the internal architecture of Merizo-search --- particularly how Foldclass encodes domains as fixed-length embeddings and retrieves candidates via cosine similarity followed by TM-align~\cite{tmalign} re-ranking --- was essential before any implementation work could begin.
+
+During this phase I also identified the Zhang et~al.\ benchmark~\cite{zhang2025ppi} as the most appropriate evaluation framework.
+Its use of weighted precision--recall to account for the extreme class imbalance in proteome-wide screening (approximately 1:1{,}000 signal-to-noise ratio) made it particularly well suited to assessing the practical utility of the approach, rather than reporting artificially inflated metrics on a balanced test set.
+
+\subsubsection{Design Phase -- Pipeline Architecture and Database Construction}
+
+With the feasibility established, the second phase focused on designing the end-to-end pipeline architecture.
+The central design challenge was transforming the TED domain pair list --- which catalogues over 200~million domain entries with intra-protein domain--domain contacts --- into a Foldclass-compatible indexed database that could be searched efficiently.
+
+I designed the pipeline around a five-stage workflow: (1)~query protein segmentation into domains using Merizo, (2)~lookup of known domain--domain contacts from the TED pair list to identify interface domains, (3)~extraction of the interface domain (Domain~$B$) as the search query, (4)~Foldclass embedding search over the indexed database to retrieve structurally similar candidates, and (5)~TM-align re-ranking and scoring of the top candidates to produce a ranked list of predicted interaction partners.
+
+To support targeted biological queries, I designed a SQLite metadata index storing per-domain information including taxonomy~ID, CATH fold classification, AlphaFold model confidence (pLDDT), and domain density.
+This schema was designed to support query-time filtering, so that a researcher could restrict a search to, for example, all human kinase domains without loading the entire 200-million-domain database into memory.
+A filtered embedding iterator was designed alongside the metadata index, loading only the relevant subset of precomputed embeddings during search to reduce both runtime and memory consumption.
+
+\subsubsection{Execution Phase -- Implementation}
+
+The implementation followed an incremental approach.
+I began with the database construction scripts, converting the raw TED pair list into the binary embedding format and SQLite index required by Foldclass.
+Once the database was in place, I implemented the core search pipeline, initially testing it on small subsets of the data to verify correctness before scaling to the full database.
+
+The filtered embedding iterator was implemented next, as it was required for practical operation on the full-scale database.
+Without filtering, each search would load all 200~million domain embeddings into memory, which was infeasible on available hardware.
+The iterator reads the SQLite index first, determines which embedding files contain domains matching the query filters, and loads only those files.
+
+The end-to-end workflow was wrapped in a shell script (\texttt{search-potential-interactions.sh}) that orchestrates the full pipeline from an input protein structure to a ranked list of candidate interaction partners.
+Version control via Git was used throughout to track changes, and regular meetings with my supervisor ensured the implementation remained aligned with the project goals.
+
+\subsubsection{Validation Phase -- Benchmarking and Analysis}
+
+The final phase focused on systematic evaluation against the Zhang et~al.\ benchmark~\cite{zhang2025ppi}.
+I implemented a benchmarking script (\texttt{benchmark\_ppi.py}) that runs the pipeline over the 3{,}000 positive and 30{,}000 negative pairs in the benchmark, computes TM-scores for each pair, and generates weighted precision--recall curves.
+
+A sweep of TM-score thresholds from 0.3 to 0.9 was conducted to characterise the trade-off between precision and recall.
+At each threshold, I computed area under the weighted precision--recall curve (AUCPR) and precision at recall thresholds of 0.1, 0.2, and 0.5.
+Beyond aggregate metrics, I performed a qualitative failure analysis, manually inspecting cases where the method produced false positives or false negatives to identify the principal failure modes --- including paralogs with divergent interaction partners, convergent fold evolution, and interactions mediated by intrinsically disordered regions that lack stable tertiary structure.
+
+The filtering infrastructure was also validated by comparing runtime and peak memory usage with and without SQLite-based filtering, to quantify the practical gains of the metadata index and filtered iterator.
+
+
+% ============================================================
+% 1.X  Report Structure
+% ============================================================
+\subsection{Report Structure}
+\label{sec:intro-report-structure}
+
+This report documents the design, implementation, and evaluation of a proteome-scale PPI prediction pipeline based on domain structural homology transfer.
+Below is an outline of the structure this report will follow:
+
+\begin{itemize}
+    \item \textbf{Chapter~\ref{ch:background}: Background and Related Work} ---
+    A review of the biological context of protein--protein interactions, existing computational PPI prediction methods, and the enabling technologies underpinning this work: AlphaFold2, the TED dataset, CATH domain classification, and the Merizo-search pipeline.
+    The chapter concludes with a discussion of structural homology transfer and the evaluation framework adopted.
+
+    \item \textbf{Chapter~\ref{ch:design}: System Design and Implementation} ---
+    A detailed description of the pipeline architecture, including database construction from the TED pair list, the search pipeline design, the SQLite metadata index schema, the filtered embedding iterator, and the end-to-end workflow.
+    Key design decisions and the alternatives considered are discussed.
+
+    \item \textbf{Chapter~\ref{ch:evaluation}: Evaluation Methodology} ---
+    A description of the Zhang et~al.\ benchmark, the weighted precision--recall framework, the metrics used, and the TM-score threshold sweep design.
+
+    \item \textbf{Chapter~\ref{ch:results}: Results and Analysis} ---
+    Presentation and analysis of the benchmark results, including threshold sweep curves, case studies of successful and failed predictions, a critical failure analysis, and validation of the filtering infrastructure.
+
+    \item \textbf{Chapter~\ref{ch:conclusions}: Conclusions} ---
+    A summary of the project's contributions, a critical evaluation of the approach, discussion of limitations and future work, and reflections on the project.
+\end{itemize}

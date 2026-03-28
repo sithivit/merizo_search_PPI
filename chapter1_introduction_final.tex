@@ -1,0 +1,191 @@
+% ============================================================
+% Chapter 1: Introduction
+% ============================================================
+\chapter{Introduction}
+\label{ch:introduction}
+
+% ------------------------------------------------------------
+% 1.1 Project Background and Motivation
+% ------------------------------------------------------------
+\section{Project Background and Motivation}
+\label{sec:intro-background}
+
+Proteins rarely work in isolation.
+Almost every biological process, including DNA replication, signal transduction, and immune response, depends on proteins physically binding to one another to form functional complexes.
+Understanding which proteins interact, and through which structural interfaces, is therefore one of the central problems in molecular biology.
+A complete map of protein--protein interactions (PPIs) for a given organism would be of considerable value: it could reveal new drug targets, explain disease mechanisms, and clarify how cellular machinery is assembled and regulated~\cite{zhang2025ppi}.
+
+Experimentally determining PPIs, however, remains slow and expensive.
+High-throughput techniques such as yeast two-hybrid (Y2H) screening and affinity-purification mass spectrometry (AP-MS) can identify interactions at scale, but they are noisy, biased towards certain interaction types, and do not cover the full proteome~\cite{zhang2025ppi}.
+The human proteome alone contains approximately 20{,}000 proteins, giving rise to roughly $2 \times 10^{8}$ possible pairwise interactions.
+Exhaustively testing this space experimentally is not feasible with current technology.
+
+Computational methods offer a way to narrow this search space.
+Over the past two decades, a range of approaches have been developed, including sequence-based co-evolution analysis, machine-learning classifiers trained on known interactions, and physics-based docking simulations.
+Each comes with trade-offs.
+Co-evolution methods require deep multiple sequence alignments that are unavailable for many protein families.
+Docking is computationally expensive and demands high-quality input structures.
+Supervised learning approaches depend heavily on the coverage and quality of their training data.
+
+The release of AlphaFold2 in 2021~\cite{alphafold2} changed this situation considerably.
+AlphaFold2 predicts protein tertiary structure from sequence alone with near-experimental accuracy, and the AlphaFold Protein Structure Database has since been expanded to cover over 200 million predicted structures across hundreds of organisms~\cite{ted_dataset}.
+With reliable structures now available for most known proteins, structural similarity can potentially be used to infer interactions at proteome scale.
+
+The intuition behind this idea is simple.
+If a domain in protein~$X$ is structurally very similar to a domain in protein~$Y$, and protein~$Y$ is known to interact with protein~$Z$ through that domain, then protein~$X$ may also interact with~$Z$ (or with proteins structurally similar to~$Z$) via an analogous binding interface.
+This principle, known as structural homology transfer, is well established for transferring functional annotations between proteins, but its application to large-scale PPI prediction remains relatively underexplored.
+
+
+% ------------------------------------------------------------
+% 1.2 Project Overview
+% ------------------------------------------------------------
+\section{Project Overview}
+\label{sec:intro-overview}
+
+This project extends Merizo-search~\cite{merizo_search}, a fast structural domain search tool developed at UCL, to support proteome-scale PPI prediction through domain structural homology transfer.
+Merizo-search combines two components.
+The first is \textbf{Merizo}~\cite{merizo}, a deep-learning model that segments a protein structure into its constituent domains using invariant point attention.
+The second is \textbf{Foldclass}~\cite{merizo_search}, a structural comparison engine that encodes each domain as a fixed-length neural-network embedding.
+Given a query domain, Foldclass searches a precomputed database of embeddings via cosine similarity to rapidly retrieve structurally similar candidates, which are then re-ranked using TM-score~\cite{tmalign}.
+Together, the two components make it practical to query databases containing hundreds of millions of domains within minutes.
+
+The core idea of this project is as follows.
+Consider a protein containing two domains, Domain~$A$ and Domain~$B$, where Domain~$B$ serves as the interface domain responsible for mediating a binding interaction.
+If a structural search identifies another protein whose domain~$B'$ is a close structural homolog of Domain~$B$, then that protein becomes a candidate for interacting with partners of Domain~$A$ via the same binding interface.
+More formally, if Domain~$B$ is known to interact with Domain~$A$, and $B'$ is a structural homolog of~$B$, then $B'$ is hypothesised to also interact with~$A$ (or structural homologs of~$A$).
+This hypothesis forms the foundation of the proposed pipeline.
+
+The domain pairing information, that is, which domains are predicted to form interaction interfaces, is derived from the TED (The Encyclopaedia of Domains) dataset~\cite{ted_dataset}.
+TED decomposes AlphaFold-predicted structures into domains and identifies intra-protein domain--domain contacts.
+In this work, each such contact pair is treated as a potential interaction template: Domain~$B$ (the interface domain) is used as the search query, and proteins containing high-scoring structural homologs of Domain~$B$ are returned as predicted interaction partners.
+The TED pair list was transformed into a Foldclass-compatible indexed database to enable this search at scale.
+
+The system was evaluated against the benchmark of Zhang et~al.~\cite{zhang2025ppi}, which provides 3{,}000 high-confidence positive PPI pairs and 30{,}000 random negative pairs drawn from the intersection of STRING, BioGRID, and UniProt.
+Evaluation follows a weighted precision--recall framework with a positive weight of~$0.01$, reflecting the approximately 1:1{,}000 signal-to-noise ratio expected in proteome-wide screening.
+Full details of the evaluation methodology are given in Chapter~\ref{ch:evaluation}.
+
+Beyond the core search pipeline, several features were implemented to improve the practical usability of the system.
+A metadata index was constructed using SQLite, storing per-domain information including taxonomy ID, CATH fold classification, model confidence, and domain density.
+This index supports query-time filtering, allowing results to be restricted to a specific organism or structural family.
+A filtered iterator was also implemented to load only the relevant subset of embeddings into memory during search, reducing both runtime and memory consumption when operating on targeted subsets of the database.
+
+This project makes the following contributions:
+\begin{enumerate}
+    \item A PPI prediction pipeline that repurposes domain-level structural search for interaction inference, extending Merizo-search with an application it was not originally designed for.
+    \item A scalable, filterable database built from the TED pair list, with a SQLite metadata index and a filtered embedding iterator that together enable organism- and fold-specific queries over hundreds of millions of domains.
+    \item A systematic evaluation against the Zhang et~al.\ benchmark, including TM-score threshold analysis and precision--recall characterisation, providing the first assessment of domain homology transfer as a standalone PPI prediction signal using Merizo-search.
+    \item A critical analysis of the method's limitations, identifying failure modes where structural homology alone is insufficient to predict biologically meaningful interactions.
+\end{enumerate}
+
+
+% ------------------------------------------------------------
+% 1.3 Aims and Goals
+% ------------------------------------------------------------
+\section{Aims and Goals}
+\label{sec:intro-aims}
+
+Following the distinction drawn in the project guidelines, \emph{aims} describe the overall purpose of the project, while \emph{objectives} are specific, measurable deliverables.
+
+\subsection{Aims}
+
+\begin{itemize}
+    \item To investigate whether domain-level structural homology, as captured by Merizo-search and the TED domain pair list, provides a useful signal for predicting protein--protein interactions at proteome scale.
+    \item To develop practical infrastructure (filtering, metadata indexing, and efficient iteration) that makes structural homology search usable for targeted biological queries.
+    \item To critically assess the strengths and limitations of a purely structure-based approach to PPI prediction, identifying where complementary signals such as co-expression or co-evolution data would be needed.
+\end{itemize}
+
+\subsection{Objectives}
+
+\begin{enumerate}
+    \item Implement a PPI prediction pipeline based on domain structural homology search, using Merizo-search and the TED pair list as the underlying infrastructure.
+    \item Build a searchable, filtered database derived from the TED pair list, enabling queries to be scoped by organism (taxonomy ID) and structural classification (CATH family).
+    \item Evaluate the approach against the Zhang et~al.\ benchmark~\cite{zhang2025ppi}, reporting area under the weighted precision--recall curve (AUCPR) and precision at recall thresholds of 0.1, 0.2, and 0.5 across a range of TM-score cutoffs.
+    \item Analyse the limitations of the method, particularly failure cases where structural homology alone is insufficient to predict biologically meaningful interactions.
+\end{enumerate}
+
+
+% ------------------------------------------------------------
+% 1.4 Project Approach
+% ------------------------------------------------------------
+\section{Project Approach}
+\label{sec:intro-approach}
+
+In the following section I discuss the various phases of the project and the approach taken at each phase.
+The project followed an iterative research-driven methodology, where each phase informed and refined the next.
+Any technologies, tools, or design decisions adopted during a particular phase are stated and justified.
+
+\subsection{Planning Phase -- Literature Review and Feasibility}
+
+The first phase of the project focused on understanding the problem domain and assessing whether structural homology transfer was a viable signal for PPI prediction.
+I began by conducting a literature review of existing computational PPI prediction methods, including co-evolution-based approaches, machine-learning classifiers, and physics-based docking, to understand their respective strengths and limitations.
+This review established that while structural similarity had been used extensively for function annotation, its systematic application to interaction prediction at proteome scale remained underexplored.
+
+I then studied the key tools and datasets that would underpin the project: the AlphaFold Protein Structure Database~\cite{alphafold2}, the TED dataset and its domain pair list~\cite{ted_dataset}, and the Merizo-search pipeline comprising Merizo~\cite{merizo} for domain segmentation and Foldclass~\cite{merizo_search} for structural search.
+Understanding the internal architecture of Merizo-search --- particularly how Foldclass encodes domains as fixed-length embeddings and retrieves candidates via cosine similarity followed by TM-align~\cite{tmalign} re-ranking --- was essential before any implementation work could begin.
+
+During this phase I also identified the Zhang et~al.\ benchmark~\cite{zhang2025ppi} as the most appropriate evaluation framework.
+Its use of weighted precision--recall to account for the extreme class imbalance in proteome-wide screening (approximately 1:1{,}000 signal-to-noise ratio) made it particularly well suited to assessing the practical utility of the approach, rather than reporting artificially inflated metrics on a balanced test set.
+
+\subsection{Design Phase -- Pipeline Architecture and Database Construction}
+
+With the feasibility established, the second phase focused on designing the end-to-end pipeline architecture.
+The central design challenge was transforming the TED domain pair list --- which catalogues over 200~million domain entries with intra-protein domain--domain contacts --- into a Foldclass-compatible indexed database that could be searched efficiently.
+
+I designed the pipeline around a five-stage workflow: (1)~query protein segmentation into domains using Merizo, (2)~lookup of known domain--domain contacts from the TED pair list to identify interface domains, (3)~extraction of the interface domain (Domain~$B$) as the search query, (4)~Foldclass embedding search over the indexed database to retrieve structurally similar candidates, and (5)~TM-align re-ranking and scoring of the top candidates to produce a ranked list of predicted interaction partners.
+
+To support targeted biological queries, I designed a SQLite metadata index storing per-domain information including taxonomy~ID, CATH fold classification, AlphaFold model confidence (pLDDT), and domain density.
+This schema was designed to support query-time filtering, so that a researcher could restrict a search to, for example, all human kinase domains without loading the entire 200-million-domain database into memory.
+A filtered embedding iterator was designed alongside the metadata index, loading only the relevant subset of precomputed embeddings during search to reduce both runtime and memory consumption.
+
+\subsection{Execution Phase -- Implementation}
+
+The implementation followed an incremental approach.
+I began with the database construction scripts, converting the raw TED pair list into the binary embedding format and SQLite index required by Foldclass.
+Once the database was in place, I implemented the core search pipeline, initially testing it on small subsets of the data to verify correctness before scaling to the full database.
+
+The filtered embedding iterator was implemented next, as it was required for practical operation on the full-scale database.
+Without filtering, each search would load all 200~million domain embeddings into memory, which was infeasible on available hardware.
+The iterator reads the SQLite index first, determines which embedding files contain domains matching the query filters, and loads only those files.
+
+The end-to-end workflow was wrapped in a shell script (\texttt{search-potential-interactions.sh}) that orchestrates the full pipeline from an input protein structure to a ranked list of candidate interaction partners.
+Version control via Git was used throughout to track changes, and regular meetings with my supervisor ensured the implementation remained aligned with the project goals.
+
+\subsection{Validation Phase -- Benchmarking and Analysis}
+
+The final phase focused on systematic evaluation against the Zhang et~al.\ benchmark~\cite{zhang2025ppi}.
+I implemented a benchmarking script (\texttt{benchmark\_ppi.py}) that runs the pipeline over the 3{,}000 positive and 30{,}000 negative pairs in the benchmark, computes TM-scores for each pair, and generates weighted precision--recall curves.
+
+A sweep of TM-score thresholds from 0.3 to 0.9 was conducted to characterise the trade-off between precision and recall.
+At each threshold, I computed area under the weighted precision--recall curve (AUCPR) and precision at recall thresholds of 0.1, 0.2, and 0.5.
+Beyond aggregate metrics, I performed a qualitative failure analysis, manually inspecting cases where the method produced false positives or false negatives to identify the principal failure modes --- including paralogs with divergent interaction partners, convergent fold evolution, and interactions mediated by intrinsically disordered regions that lack stable tertiary structure.
+
+The filtering infrastructure was also validated by comparing runtime and peak memory usage with and without SQLite-based filtering, to quantify the practical gains of the metadata index and filtered iterator.
+
+
+% ------------------------------------------------------------
+% 1.5 Report Structure
+% ------------------------------------------------------------
+\section{Report Structure}
+\label{sec:intro-report-structure}
+
+This report documents the design, implementation, and evaluation of a proteome-scale PPI prediction pipeline based on domain structural homology transfer.
+Below is an outline of the structure this report will follow:
+
+\begin{itemize}
+    \item \textbf{Chapter~\ref{ch:background}: Background and Related Work} ---
+    A review of the biological context of protein--protein interactions, existing computational PPI prediction methods, and the enabling technologies underpinning this work: AlphaFold2, the TED dataset, CATH domain classification, and the Merizo-search pipeline.
+    The chapter concludes with a discussion of structural homology transfer and the evaluation framework adopted.
+
+    \item \textbf{Chapter~\ref{ch:design}: System Design and Implementation} ---
+    A detailed description of the pipeline architecture, including database construction from the TED pair list, the search pipeline design, the SQLite metadata index schema, the filtered embedding iterator, and the end-to-end workflow.
+    Key design decisions and the alternatives considered are discussed.
+
+    \item \textbf{Chapter~\ref{ch:evaluation}: Evaluation Methodology} ---
+    A description of the Zhang et~al.\ benchmark, the weighted precision--recall framework, the metrics used, and the TM-score threshold sweep design.
+
+    \item \textbf{Chapter~\ref{ch:results}: Results and Analysis} ---
+    Presentation and analysis of the benchmark results, including threshold sweep curves, case studies of successful and failed predictions, a critical failure analysis, and validation of the filtering infrastructure.
+
+    \item \textbf{Chapter~\ref{ch:conclusions}: Conclusions} ---
+    A summary of the project's contributions, a critical evaluation of the approach, discussion of limitations and future work, and reflections on the project.
+\end{itemize}
