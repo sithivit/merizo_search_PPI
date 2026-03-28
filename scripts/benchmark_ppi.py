@@ -27,6 +27,7 @@ Examples:
 import argparse
 import csv
 import logging
+import mmap
 import os
 import random
 import re
@@ -39,6 +40,16 @@ import tempfile
 import urllib.request
 from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor, as_completed
+
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                                '..', 'merizo_search', 'programs'))
+from Foldclass.dbutil import (
+    read_dbinfo,
+    retrieve_names_by_idx,
+    retrieve_start_end_by_idx,
+    retrieve_bytes,
+    coord_conv,
+)
 
 logging.basicConfig(
     level=logging.INFO,
@@ -184,8 +195,109 @@ def load_pair_list(path: str, target_proteins: set) -> dict:
 # Step 4: Structural search (with caching)
 # ---------------------------------------------------------------------------
 
-def extract_domain_b_pdb(domain_b: str, pairlist_db: str, output_pdb: str) -> bool:
-    """Run extract_domain_pdb.py. Returns True on success."""
+_AA_1TO3 = {
+    'A': 'ALA', 'R': 'ARG', 'N': 'ASN', 'D': 'ASP', 'C': 'CYS',
+    'Q': 'GLN', 'E': 'GLU', 'G': 'GLY', 'H': 'HIS', 'I': 'ILE',
+    'L': 'LEU', 'K': 'LYS', 'M': 'MET', 'F': 'PHE', 'P': 'PRO',
+    'S': 'SER', 'T': 'THR', 'W': 'TRP', 'Y': 'TYR', 'V': 'VAL',
+}
+
+
+def build_domain_name_index(pairlist_db: str, target_names: set) -> dict:
+    """Scan the pairlist names file once and build a name -> original_db_index dict.
+
+    Only loads entries whose names are in target_names to keep memory low.
+    Called once at startup; threads then do O(1) lookups.
+    """
+    db_json = pairlist_db + ".json"
+    dbinfo = read_dbinfo(db_json)
+    db_dir = os.path.dirname(os.path.abspath(db_json))
+
+    def resolve(key):
+        p = dbinfo[key]
+        return p if os.path.isabs(p) else os.path.join(db_dir, p)
+
+    name_to_idx = {}
+
+    if 'INDEX_LIST_FILE' in dbinfo:
+        index_list_path = os.path.join(db_dir, dbinfo['INDEX_LIST_FILE'])
+        with open(index_list_path, 'r') as f:
+            indices = [int(line.strip()) for line in f]
+
+        log.info(f"Building domain name index from {len(indices):,} pairlist entries "
+                 f"(looking for {len(target_names):,} domains)...")
+        with open(resolve('db_names_f'), 'rb') as f:
+            mm = mmap.mmap(f.fileno(), 0, access=mmap.ACCESS_READ)
+            names = retrieve_names_by_idx(idx=indices, mm=mm)
+        for name, orig_idx in zip(names, indices):
+            if name in target_names:
+                name_to_idx[name] = orig_idx
+    else:
+        ENTRY_SIZE = 33
+        db_size = dbinfo['DB_SIZE']
+        log.info(f"Building domain name index (full scan of {db_size:,} entries)...")
+        with open(resolve('db_names_f'), 'rb') as f:
+            mm = mmap.mmap(f.fileno(), 0, access=mmap.ACCESS_READ)
+            for idx in range(db_size):
+                mm.seek(idx * ENTRY_SIZE)
+                raw = mm.read(ENTRY_SIZE)
+                name = raw.decode('utf-8', errors='ignore').strip('\x00').strip()
+                if name in target_names:
+                    name_to_idx[name] = idx
+                    if len(name_to_idx) == len(target_names):
+                        break
+
+    log.info(f"Domain index built: {len(name_to_idx):,}/{len(target_names):,} found")
+    return name_to_idx
+
+
+def extract_domain_b_pdb(domain_b: str, pairlist_db: str, output_pdb: str,
+                         name_to_idx: dict = None) -> bool:
+    """Extract domain B PDB in-process using pre-built name index (fast),
+    or fall back to subprocess if name_to_idx is not provided."""
+    if name_to_idx is not None:
+        try:
+            domain_idx = name_to_idx.get(domain_b)
+            if domain_idx is None:
+                return False
+
+            db_json = pairlist_db + ".json"
+            dbinfo = read_dbinfo(db_json)
+            db_dir = os.path.dirname(os.path.abspath(db_json))
+
+            def resolve(key):
+                p = dbinfo[key]
+                return p if os.path.isabs(p) else os.path.join(db_dir, p)
+
+            with open(resolve('sif'), 'rb') as sif, \
+                 open(resolve('sdf'), 'rb') as sdf:
+                si_mm = mmap.mmap(sif.fileno(), 0, access=mmap.ACCESS_READ)
+                sd_mm = mmap.mmap(sdf.fileno(), 0, access=mmap.ACCESS_READ)
+                startend = retrieve_start_end_by_idx(idx=[domain_idx], mm=si_mm)
+                sequence = retrieve_bytes(startend[0][0], startend[0][1],
+                                         mm=sd_mm, typeconv=lambda x: x.decode('ascii'))
+
+            with open(resolve('cif'), 'rb') as cif, \
+                 open(resolve('cdf'), 'rb') as cdf:
+                ci_mm = mmap.mmap(cif.fileno(), 0, access=mmap.ACCESS_READ)
+                cd_mm = mmap.mmap(cdf.fileno(), 0, access=mmap.ACCESS_READ)
+                startend = retrieve_start_end_by_idx(idx=[domain_idx], mm=ci_mm)
+                coords = retrieve_bytes(startend[0][0], startend[0][1],
+                                        mm=cd_mm, typeconv=coord_conv)
+
+            with open(output_pdb, 'w') as f:
+                for i, (aa, coord) in enumerate(zip(sequence, coords), start=1):
+                    resname = _AA_1TO3.get(aa, 'UNK')
+                    f.write(f"ATOM  {i: >5}  CA  {resname: >3} A{i: >4}    "
+                            f"{coord[0]: >8.3f}{coord[1]: >8.3f}{coord[2]: >8.3f}"
+                            f"  1.00  0.00\n")
+                f.write("END\n")
+            return True
+        except Exception as e:
+            log.warning(f"  extract_domain_pdb error for {domain_b}: {e}")
+            return False
+
+    # Fallback: subprocess (single-worker / no index available)
     extract_script = os.path.join(SCRIPT_DIR, "extract_domain_pdb.py")
     db_json = pairlist_db + ".json"
     cmd = [sys.executable, extract_script, db_json, domain_b, output_pdb]
@@ -274,7 +386,8 @@ def parse_search_results(tsv_path: str, query_protein_id: str, taxid_filter: str
 
 
 def _search_one_protein(protein_id, domain_b, search_cache_dir, pairlist_db,
-                        taxid, topk, tm_threshold, search_batchsize, force_rerun):
+                        taxid, topk, tm_threshold, search_batchsize, force_rerun,
+                        name_to_idx=None):
     """Process a single protein in a thread. Returns (protein_id, hits_dict, status_msg)."""
     cache_tsv = os.path.join(search_cache_dir, f"{protein_id}_search.tsv")
 
@@ -284,7 +397,7 @@ def _search_one_protein(protein_id, domain_b, search_cache_dir, pairlist_db,
 
     with tempfile.TemporaryDirectory(prefix="bench_pdb_") as tmpdir:
         pdb_path = os.path.join(tmpdir, f"{protein_id}.pdb")
-        if not extract_domain_b_pdb(domain_b, pairlist_db, pdb_path):
+        if not extract_domain_b_pdb(domain_b, pairlist_db, pdb_path, name_to_idx=name_to_idx):
             return protein_id, {}, "extract_failed"
 
         log.info(f"  [{protein_id}] extraction OK — running merizo search (topk={topk}, mintm={tm_threshold})")
@@ -312,13 +425,21 @@ def run_searches_for_proteins(
     total = len(proteins_to_search)
     workers = getattr(args, 'workers', 1)
 
+    # Build the domain name -> original DB index mapping once so threads don't
+    # each scan the full pairlist (which caused timeouts when running in parallel).
+    needed_domains = {pair_list[pid][1] for pid in proteins_to_search
+                      if not os.path.exists(os.path.join(args.search_cache_dir,
+                                                         f"{pid}_search.tsv"))
+                      or args.force_rerun}
+    name_to_idx = build_domain_name_index(args.pairlist_db, needed_domains) if needed_domains else {}
+
     def _submit(protein_id):
         domain_a, domain_b, pae = pair_list[protein_id]
-        log.info(f"  extracting domain B: {domain_b}")
         return _search_one_protein(
             protein_id, domain_b,
             args.search_cache_dir, args.pairlist_db, args.taxid,
             args.topk, args.tm_threshold, args.search_batchsize, args.force_rerun,
+            name_to_idx=name_to_idx,
         )
 
     if workers == 1:

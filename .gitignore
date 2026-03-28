@@ -32,3 +32,8 @@ ENV/
 
 docs/
 claude/
+
+# Report files
+*.tex
+*.md
+!README.md
