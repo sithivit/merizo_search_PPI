@@ -220,7 +220,10 @@ def run_search(pdb_path: str, pairlist_db: str, output_prefix: str,
         r = subprocess.run(cmd, capture_output=True, text=True, timeout=600)
         shutil.rmtree(tmp, ignore_errors=True)
         tsv = output_prefix + "_search.tsv"
-        return tsv if r.returncode == 0 and os.path.exists(tsv) else None
+        if r.returncode != 0 or not os.path.exists(tsv):
+            log.warning(f"Search failed (rc={r.returncode}): {r.stderr[-500:] if r.stderr else '(no stderr)'}")
+            return None
+        return tsv
     except Exception as e:
         shutil.rmtree(tmp, ignore_errors=True)
         log.warning(f"Search error: {e}")
