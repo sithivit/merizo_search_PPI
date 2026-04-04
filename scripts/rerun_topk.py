@@ -252,14 +252,31 @@ def process_protein(pid, domain_b, pairlist_db, search_cache_dir,
 # ---------------------------------------------------------------------------
 
 def run(args):
-    # 1. Universe and target proteins
-    log.info("Loading universe from search cache...")
+    # 1. Target proteins — from covered positive pairs
+    # If search cache exists, restrict to proteins already in the universe.
+    # If cache is empty (e.g. after accidental deletion), use all positive-pair proteins.
+    os.makedirs(args.search_cache_dir, exist_ok=True)
     universe = get_universe(args.search_cache_dir)
-    log.info(f"Universe: {len(universe):,} proteins")
 
-    log.info("Identifying proteins in covered positive pairs...")
-    targets = get_covered_positive_proteins(args.controls, universe)
-    log.info(f"Target proteins to re-run: {len(targets):,}")
+    if universe:
+        log.info(f"Search cache found: {len(universe):,} proteins in universe")
+        targets = get_covered_positive_proteins(args.controls, universe)
+    else:
+        log.info("Search cache is empty — loading all positive-pair proteins from controls")
+        targets = set()
+        with open(args.controls) as fh:
+            next(fh)
+            for line in fh:
+                line = line.strip()
+                if not line:
+                    continue
+                pair, cat = line.split("\t")
+                if cat == "positive":
+                    a, b = pair.split("_")
+                    targets.add(a)
+                    targets.add(b)
+
+    log.info(f"Target proteins: {len(targets):,}")
 
     # 2. Load pair_list for domain info
     log.info("Loading pair_list (streaming)...")
