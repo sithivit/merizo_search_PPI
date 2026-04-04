@@ -217,7 +217,7 @@ def run_search(pdb_path: str, pairlist_db: str, output_prefix: str,
         "--topk", str(topk),
     ]
     try:
-        r = subprocess.run(cmd, capture_output=True, text=True, timeout=600)
+        r = subprocess.run(cmd, capture_output=True, text=True, timeout=1800)
         shutil.rmtree(tmp, ignore_errors=True)
         tsv = output_prefix + "_search.tsv"
         if r.returncode != 0 or not os.path.exists(tsv):
