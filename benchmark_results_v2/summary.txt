@@ -1,0 +1,17 @@
+============================================================
+PPI Benchmark v2 — Structural Domain Homology Evaluation
+============================================================
+
+--- Benchmark Design ---
+  Universe : proteins with cached structural search results (TED pair_list)
+  Positives: Zhang et al. high-confidence PPIs (both proteins in universe)
+  Negatives: random pairs from universe, excluding all known Zhang et al. positives
+  Coverage : 100% — no zero-score dilution from uncovered proteins
+
+--- Dataset ---
+  Universe size:              0 proteins
+  Zhang et al. positives:     3,000 total
+  Covered positives:          0  (0.0% of Zhang et al.)
+  Negatives sampled:          0  (5:1 ratio)
+
+--- Results ---
