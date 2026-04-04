@@ -224,6 +224,12 @@ def dbsearch_faiss(queries: list[dict], target_dict: dict, tmp: str, network: Fo
 
 
     import faiss
+    # Faiss version compatibility: older builds expose these as named constants,
+    # newer builds may not — fall back to their integer values.
+    if not hasattr(faiss, 'METRIC_INNER_PRODUCT'):
+        faiss.METRIC_INNER_PRODUCT = 0
+    if not hasattr(faiss, 'METRIC_L2'):
+        faiss.METRIC_L2 = 1
     # from faiss.contrib.exhaustive_search import knn_ground_truth
 
     def knn_exact_faiss(xq, db_iterator, k, metric_type=faiss.METRIC_INNER_PRODUCT, device=torch.device('cpu')):
