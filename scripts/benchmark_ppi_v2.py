@@ -92,8 +92,14 @@ def load_zhang_positives(controls_path: str) -> list:
     return positives
 
 
-def parse_search_tsv(tsv_path: str, query_protein: str, taxid: str = None) -> dict:
-    """Parse one cached search TSV. Returns {target_protein_id: max_tm}."""
+def parse_search_tsv(tsv_path: str, query_protein: str,
+                     taxid: str = None, keep_proteins: set = None) -> dict:
+    """Parse one cached search TSV. Returns {target_protein_id: max_tm}.
+
+    keep_proteins: if provided, only retain hits to proteins in this set.
+    This focuses topk budget on benchmark-relevant proteins only, avoiding
+    slots being consumed by proteins outside the evaluation universe.
+    """
     self_prefix = f"AF-{query_protein}-"
     best: dict = {}
     with open(tsv_path) as fh:
@@ -108,6 +114,8 @@ def parse_search_tsv(tsv_path: str, query_protein: str, taxid: str = None) -> di
             if not m:
                 continue
             pid = m.group(1)
+            if keep_proteins is not None and pid not in keep_proteins:
+                continue
             try:
                 tm = float(parts[COL_MAX_TM])
             except ValueError:
@@ -121,13 +129,18 @@ def parse_search_tsv(tsv_path: str, query_protein: str, taxid: str = None) -> di
     return best
 
 
-def load_search_results(proteins: set, search_cache_dir: str, taxid: str = None) -> dict:
-    """Load cached TSVs for the given proteins. Returns {protein: {target: tm}}."""
+def load_search_results(proteins: set, search_cache_dir: str,
+                        taxid: str = None, keep_proteins: set = None) -> dict:
+    """Load cached TSVs for the given proteins. Returns {protein: {target: tm}}.
+
+    keep_proteins: if set, hits to proteins outside this set are discarded.
+    """
     results = {}
     total = len(proteins)
     for i, pid in enumerate(sorted(proteins), 1):
         tsv = os.path.join(search_cache_dir, f"{pid}_search.tsv")
-        results[pid] = parse_search_tsv(tsv, pid, taxid) if os.path.exists(tsv) else {}
+        results[pid] = (parse_search_tsv(tsv, pid, taxid, keep_proteins)
+                        if os.path.exists(tsv) else {})
         if i % 500 == 0:
             log.info(f"  Loaded {i:,}/{total:,} search result files...")
     return results
@@ -328,10 +341,15 @@ def run(args):
     negatives = sample_negatives(universe_list, zhang_pos_canonical, n_neg, seed=42)
     log.info(f"Negatives generated: {len(negatives):,}")
 
-    # 4. Load search results for all involved proteins
+    # 4. Load search results, restricting hits to benchmark proteins only.
+    # This prevents topk slots being wasted on proteins outside the evaluation
+    # universe — a hit to an unverifiable protein is useless for scoring.
     all_proteins = {p for pair in positives + negatives for p in pair}
-    log.info(f"Loading cached search results for {len(all_proteins):,} proteins...")
-    search_results = load_search_results(all_proteins, args.search_cache_dir, taxid=args.taxid)
+    log.info(f"Loading cached search results for {len(all_proteins):,} proteins "
+             f"(filtering hits to benchmark universe only)...")
+    search_results = load_search_results(all_proteins, args.search_cache_dir,
+                                         taxid=args.taxid,
+                                         keep_proteins=all_proteins)
 
     # 5. Score
     log.info("Scoring pairs...")
