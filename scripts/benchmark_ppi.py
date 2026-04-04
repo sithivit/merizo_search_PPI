@@ -611,6 +611,8 @@ def write_summary_txt(
     sweep_rows: list,
     args,
     output_path: str,
+    orig_n_positives: int = None,
+    orig_n_negatives: int = None,
 ) -> None:
     P = len(positives)
     N = len(negatives)
@@ -635,11 +637,20 @@ def write_summary_txt(
         w(f"  topk:            {args.topk}")
         w(f"  wp:              {args.wp}  (positive pair weight, 1:1000 SNR)")
         w(f"  limit:           {args.limit}")
+        w(f"  covered_only:    {args.covered_only}")
         w()
 
         w("--- Benchmark Set ---")
-        w(f"  Positive pairs:  {P:,}  (intersection of STRING/BioGRID/UniProt)")
-        w(f"  Negative pairs:  {N:,}  (random human protein pairs)")
+        if args.covered_only and orig_n_positives is not None:
+            w(f"  Full positive pairs:     {orig_n_positives:,}  (intersection of STRING/BioGRID/UniProt)")
+            w(f"  Full negative pairs:     {orig_n_negatives:,}  (random human protein pairs)")
+            w(f"  Covered positive pairs:  {P:,}  (both proteins in pair_list DB)")
+            w(f"  Covered negative pairs:  {N:,}  (both proteins in pair_list DB)")
+            w(f"  Positive coverage:       {P/orig_n_positives*100:.1f}%")
+            w(f"  Negative coverage:       {N/orig_n_negatives*100:.1f}%")
+        else:
+            w(f"  Positive pairs:  {P:,}  (intersection of STRING/BioGRID/UniProt)")
+            w(f"  Negative pairs:  {N:,}  (random human protein pairs)")
         w(f"  Positives found in search (score>0):  {n_pos_found}/{P}")
         w(f"  Negatives found in search (score>0):  {n_neg_found}/{N}")
         w()
@@ -668,7 +679,10 @@ def write_summary_txt(
 
         w("--- Caveats ---")
         w("  - Score per pair = max(A→B max_tm, B→A max_tm); 0 if neither searched.")
-        w("  - Proteins not in pair_list cannot be searched (no Domain B).")
+        if args.covered_only:
+            w("  - Evaluation restricted to pairs where both proteins are in pair_list (covered subset).")
+        else:
+            w("  - Proteins not in pair_list cannot be searched (no Domain B); scored as 0.")
         w("  - Only first domain pair per protein is used as the search query.")
         w("  - Positives are high-confidence (3-database intersection); still incomplete.")
         w("  - wp=0.01 reflects ~1:1000 true PPI signal-to-noise in the human proteome.")
@@ -695,6 +709,8 @@ def run_benchmark(args) -> None:
 
     # Step 2: Load benchmark controls
     positives, negatives = load_zhang_controls(args.controls_path)
+    orig_n_positives = len(positives)
+    orig_n_negatives = len(negatives)
 
     # Step 3: Find all unique proteins; load their domain pairs from pair_list
     all_proteins = set()
@@ -705,6 +721,25 @@ def run_benchmark(args) -> None:
 
     log.info("Loading pair list (streaming, this may take a few minutes)...")
     pair_list = load_pair_list(args.pair_list, all_proteins)
+
+    # Optionally restrict benchmark to pairs where BOTH proteins are in pair_list
+    # (the "covered subset" — required for valid P-R evaluation)
+    pair_list_proteins = set(pair_list.keys())
+    if args.covered_only:
+        orig_pos = len(positives)
+        orig_neg = len(negatives)
+        positives = [(a, b) for a, b in positives
+                     if a in pair_list_proteins and b in pair_list_proteins]
+        negatives = [(a, b) for a, b in negatives
+                     if a in pair_list_proteins and b in pair_list_proteins]
+        log.info(
+            f"Covered-subset filter: "
+            f"{len(positives)}/{orig_pos} positives, "
+            f"{len(negatives)}/{orig_neg} negatives have both proteins in pair_list"
+        )
+        if not positives:
+            log.error("No covered positive pairs — check pair_list path.")
+            return
 
     # Proteins that can be searched (have a domain B in pairlist)
     searchable = sorted(pair_list.keys())
@@ -742,6 +777,8 @@ def run_benchmark(args) -> None:
     write_summary_txt(
         positives, negatives, pos_scores_filtered, neg_scores_filtered,
         precs, recs, aucpr, sweep_rows, args, summary_txt,
+        orig_n_positives=orig_n_positives,
+        orig_n_negatives=orig_n_negatives,
     )
 
     log.info(f"Results written to {args.output_dir}/")
@@ -789,6 +826,13 @@ def parse_args():
                         help="Number of parallel search workers (default: 1). "
                              "Each worker runs extract+search for one protein concurrently. "
                              "Set to 4-8 depending on available CPU cores and RAM.")
+    parser.add_argument("--covered-only", action="store_true", default=True,
+                        dest="covered_only",
+                        help="Restrict benchmark to pairs where both proteins are in pair_list "
+                             "(covered subset). Default: True. Use --no-covered-only to disable.")
+    parser.add_argument("--no-covered-only", action="store_false", dest="covered_only",
+                        help="Include all benchmark pairs even if neither protein was searched "
+                             "(uncovered pairs score 0, diluting metrics).")
     return parser.parse_args()
 
 
