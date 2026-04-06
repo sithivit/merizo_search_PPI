@@ -2,18 +2,28 @@
 """
 rerun_topk.py
 
-Re-run merizo search with a higher topk for a targeted set of proteins
-(those involved in covered positive pairs), overwriting their cached TSVs.
+Re-run merizo search for every protein in Zhang positive pairs, saving
+results to the benchmark cache.
 
-This avoids re-running all 6,000+ searches — only the ~1,000 proteins
-involved in positive pairs need higher topk to improve recall.
+By default, searches are run against the full ted_pairlist.  Pass
+--zhang-db to instead search against a Zhang-only sub-database (built by
+build_zhang_subdb.py).  This guarantees every topk slot is a verifiable
+hit — no budget is wasted on proteins outside the evaluation universe.
+
+When --zhang-db is provided the topk is automatically set to the full size
+of the Zhang sub-database unless overridden by --topk.
 
 Usage:
+    # Search against Zhang sub-database only (recommended for benchmarking)
+    python scripts/rerun_topk.py --zhang-db zhang_pairlist_db/zhang_pairlist_db/ted_pairlist
+
+    # Search against full database with explicit topk (original behaviour)
     python scripts/rerun_topk.py --topk 5000 --workers 8
 """
 
 import argparse
 import csv
+import json
 import logging
 import mmap
 import os
@@ -45,6 +55,7 @@ DEFAULT_CONTROLS     = os.path.join(PROJECT_ROOT, "benchmark_cache", "benchmarks
 DEFAULT_SEARCH_CACHE = os.path.join(PROJECT_ROOT, "benchmark_cache", "searches")
 DEFAULT_PAIR_LIST    = "/mnt/bigstore/ted/pair_list_20250128"
 DEFAULT_PAIRLIST_DB  = os.path.join(PROJECT_ROOT, "merizo_pairlist_db", "ted_pairlist")
+DEFAULT_ZHANG_DB     = None  # set via --zhang-db; if None, uses full pairlist_db
 
 _AF_RE = re.compile(r'AF-([^-]+)-F1-model_v4')
 
@@ -203,17 +214,18 @@ def extract_domain_pdb(domain_b: str, pairlist_db: str, output_pdb: str,
 # Search
 # ---------------------------------------------------------------------------
 
-def run_search(pdb_path: str, pairlist_db: str, output_prefix: str,
+def run_search(pdb_path: str, target_db: str, output_prefix: str,
                topk: int, batchsize: int) -> str:
+    """Run merizo search against target_db, writing results to output_prefix_search.tsv."""
     merizo = os.path.join(PROJECT_ROOT, "merizo_search", "merizo.py")
     tmp    = output_prefix + "_tmp"
     os.makedirs(tmp, exist_ok=True)
     import subprocess
     cmd = [
         sys.executable, merizo, "search",
-        pdb_path, pairlist_db, output_prefix, tmp,
+        pdb_path, target_db, output_prefix, tmp,
         "--search_batchsize", str(batchsize),
-        "--mintm", "0.3",
+        "--mintm", "0.0",   # no threshold — capture all scores; filter in benchmark
         "--topk", str(topk),
     ]
     try:
@@ -234,15 +246,16 @@ def run_search(pdb_path: str, pairlist_db: str, output_prefix: str,
 # Per-protein worker
 # ---------------------------------------------------------------------------
 
-def process_protein(pid, domain_b, pairlist_db, search_cache_dir,
+def process_protein(pid, domain_b, pairlist_db, target_db, search_cache_dir,
                     topk, batchsize, name_to_idx):
+    """Extract domain B PDB from pairlist_db, then search against target_db."""
     cache_tsv = os.path.join(search_cache_dir, f"{pid}_search.tsv")
     with tempfile.TemporaryDirectory(prefix="rerun_pdb_") as tmpdir:
         pdb = os.path.join(tmpdir, f"{pid}.pdb")
         if not extract_domain_pdb(domain_b, pairlist_db, pdb, name_to_idx):
             return pid, "extract_failed"
         prefix = os.path.join(tmpdir, pid)
-        tsv = run_search(pdb, pairlist_db, prefix, topk, batchsize)
+        tsv = run_search(pdb, target_db, prefix, topk, batchsize)
         if tsv is None:
             return pid, "search_failed"
         shutil.move(tsv, cache_tsv)
@@ -254,9 +267,16 @@ def process_protein(pid, domain_b, pairlist_db, search_cache_dir,
 # Main
 # ---------------------------------------------------------------------------
 
+def get_db_size(db_path: str) -> int:
+    """Read DB_SIZE from the database JSON config."""
+    json_path = db_path + ".json"
+    with open(json_path) as fh:
+        return json.load(fh).get("DB_SIZE", 0)
+
+
 def run(args):
     # 1. Target proteins — all unique proteins from positive pairs.
-    # Coverage is determined by pair_list, not by what's already in the cache.
+    # Coverage is determined by pair_list presence, not by what's in the cache.
     os.makedirs(args.search_cache_dir, exist_ok=True)
     targets = set()
     with open(args.controls) as fh:
@@ -271,28 +291,47 @@ def run(args):
                 targets.add(a)
                 targets.add(b)
 
-    log.info(f"Target proteins: {len(targets):,}")
+    log.info(f"Target proteins from Zhang positives: {len(targets):,}")
 
-    # 2. Load pair_list for domain info
+    # 2. Resolve which database to SEARCH AGAINST
+    #    - pairlist_db : used to extract query PDB structures (source of structures)
+    #    - target_db   : the database being searched (full or Zhang-only sub-db)
+    if args.zhang_db:
+        target_db = args.zhang_db
+        zhang_db_size = get_db_size(target_db)
+        # Auto-set topk to cover the entire Zhang sub-database unless overridden
+        topk = args.topk if args.topk is not None else zhang_db_size
+        log.info(f"Search target: Zhang sub-database ({target_db})")
+        log.info(f"Zhang sub-database size: {zhang_db_size:,} domains")
+        log.info(f"topk: {topk} ({'auto from DB_SIZE' if args.topk is None else 'user-specified'})")
+        log.info("All search hits will be to Zhang proteins — 100% verifiable.")
+    else:
+        target_db = args.pairlist_db
+        topk = args.topk if args.topk is not None else 5000
+        log.info(f"Search target: full pairlist_db ({target_db})")
+        log.info(f"topk: {topk}")
+        log.warning("Searching full database — topk slots may be consumed by non-Zhang proteins.")
+
+    # 3. Load pair_list for domain info (needed to extract query PDB structures)
     log.info("Loading pair_list (streaming)...")
     pair_list = load_pair_list(args.pair_list, targets)
 
     searchable = [pid for pid in targets if pid in pair_list]
-    log.info(f"Searchable targets: {len(searchable):,}")
+    log.info(f"Searchable targets (in pair_list): {len(searchable):,}")
 
-    # 3. Build domain index once
+    # 4. Build domain index for query structure extraction (always from full pairlist_db)
     needed_domains = {pair_list[pid][1] for pid in searchable}
-    log.info(f"Building domain index for {len(needed_domains):,} domains...")
+    log.info(f"Building domain index for {len(needed_domains):,} query domains...")
     name_to_idx = build_domain_index(args.pairlist_db, needed_domains)
 
-    # 4. Re-run searches
+    # 5. Re-run searches
     total = len(searchable)
-    log.info(f"Re-running {total} searches with topk={args.topk}, workers={args.workers}...")
+    log.info(f"Running {total} searches with topk={topk}, workers={args.workers}...")
 
     def submit(pid):
         _, domain_b, _ = pair_list[pid]
-        return process_protein(pid, domain_b, args.pairlist_db,
-                               args.search_cache_dir, args.topk,
+        return process_protein(pid, domain_b, args.pairlist_db, target_db,
+                               args.search_cache_dir, topk,
                                args.batchsize, name_to_idx)
 
     if args.workers == 1:
@@ -313,16 +352,27 @@ def run(args):
 
 def parse_args():
     p = argparse.ArgumentParser(
-        description="Re-run merizo search with higher topk for covered positive-pair proteins only."
+        description="Re-run merizo search for Zhang positive-pair proteins. "
+                    "Use --zhang-db to constrain searches to the Zhang universe only.",
+        formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
-    p.add_argument("--controls",        default=DEFAULT_CONTROLS)
-    p.add_argument("--search-cache-dir", default=DEFAULT_SEARCH_CACHE, dest="search_cache_dir")
-    p.add_argument("--pair-list",        default=DEFAULT_PAIR_LIST,    dest="pair_list")
-    p.add_argument("--pairlist-db",      default=DEFAULT_PAIRLIST_DB,  dest="pairlist_db")
-    p.add_argument("--topk",    type=int, default=5000,
-                   help="New topk for searches (default: 5000)")
+    p.add_argument("--controls",         default=DEFAULT_CONTROLS,
+                   help="positives_and_negatives.tsv")
+    p.add_argument("--search-cache-dir", default=DEFAULT_SEARCH_CACHE, dest="search_cache_dir",
+                   help="Directory where per-protein search TSVs are saved")
+    p.add_argument("--pair-list",        default=DEFAULT_PAIR_LIST,    dest="pair_list",
+                   help="Full TED pair_list (used to locate query domain structures)")
+    p.add_argument("--pairlist-db",      default=DEFAULT_PAIRLIST_DB,  dest="pairlist_db",
+                   help="Full merizo pairlist database (source of query PDB structures)")
+    p.add_argument("--zhang-db",         default=DEFAULT_ZHANG_DB,     dest="zhang_db",
+                   help="Zhang-only sub-database built by build_zhang_subdb.py. "
+                        "When provided, all searches target ONLY Zhang proteins so "
+                        "every hit is verifiable. topk defaults to the full sub-db size.")
+    p.add_argument("--topk",    type=int, default=None,
+                   help="topk for searches. Defaults to Zhang sub-db size when --zhang-db "
+                        "is set, or 5000 otherwise.")
     p.add_argument("--workers", type=int, default=4,
-                   help="Parallel workers (default: 4)")
+                   help="Parallel workers")
     p.add_argument("--batchsize", type=int, default=2097152, dest="batchsize")
     return p.parse_args()
 
