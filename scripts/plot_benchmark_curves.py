@@ -17,9 +17,12 @@ import csv
 import os
 import random
 
-def compute_weighted_pr(pos_scores, neg_scores, wp=0.01):
+def compute_weighted_pr(pos_scores, neg_scores, wp=0.01, seed=42):
+    """Matches benchmark_ppi_v2.py exactly: shuffle before sort to break ties randomly."""
     P = len(pos_scores)
     all_pairs = [(s, 1) for s in pos_scores] + [(s, 0) for s in neg_scores]
+    rng = random.Random(seed)
+    rng.shuffle(all_pairs)
     all_pairs.sort(key=lambda x: x[0], reverse=True)
     precisions, recalls = [], []
     tp = fp = 0
@@ -38,21 +41,22 @@ def compute_weighted_pr(pos_scores, neg_scores, wp=0.01):
 
 
 def compute_roc(pos_scores, neg_scores):
-    all_pairs = [(s, 1) for s in pos_scores] + [(s, 0) for s in neg_scores]
-    all_pairs.sort(key=lambda x: x[0], reverse=True)
-    N_neg = len(neg_scores)
+    """Group tied scores together so TPR and FPR jump simultaneously — matches Mann-Whitney U."""
+    from collections import defaultdict
     N_pos = len(pos_scores)
+    N_neg = len(neg_scores)
+    counts = defaultdict(lambda: [0, 0])
+    for s in pos_scores:
+        counts[s][0] += 1
+    for s in neg_scores:
+        counts[s][1] += 1
     fprs, tprs = [0.0], [0.0]
     tp = fp = 0
-    for score, label in all_pairs:
-        if label == 1:
-            tp += 1
-        else:
-            fp += 1
+    for s in sorted(counts, reverse=True):
+        tp += counts[s][0]
+        fp += counts[s][1]
         fprs.append(fp / N_neg)
         tprs.append(tp / N_pos)
-    fprs.append(1.0)
-    tprs.append(1.0)
     roc_auc = sum(
         0.5 * (tprs[i] + tprs[i-1]) * (fprs[i] - fprs[i-1])
         for i in range(1, len(fprs))
