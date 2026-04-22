@@ -36,6 +36,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+from typing import Optional
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 PROJECT_ROOT = os.path.dirname(SCRIPT_DIR)
@@ -72,7 +73,7 @@ def run_merizo_search(pdb_path: str, zhang_db: str, topk: int,
         return _parse_tsv(tsv, query_hint=None)
 
 
-def _parse_tsv(tsv_path: str, query_hint: str | None) -> dict:
+def _parse_tsv(tsv_path: str, query_hint: Optional[str]) -> dict:
     best = {}
     with open(tsv_path) as fh:
         for line in fh:
