@@ -223,7 +223,80 @@ Phase 2 results: (to be filled in)
 
 ---
 
-## Current Status (2026-04-22)
+---
+
+### 2026-04-22 — Phase 2 Search Job Started
+
+**Bug found and fixed before running:** `rosetta_search_both_sides.py` queried SQLite with
+pattern `model_v4TED%` but the database stores `model_v4_TED%` (underscore before TED).
+This caused every protein to return `no_domains_in_sqlite`. Fix: added the missing underscore.
+
+**Second fix applied:** Non-canonical TrEMBL accessions (A0A075B6H7, B7Z3J9, etc.) were
+being included in the protein list even though they have no AlphaFold structures in TED.
+Added `is_canonical_uniprot()` pre-filter using regex to skip them immediately.
+- 2,098 non-canonical accessions skipped
+- 16,855 canonical proteins remaining
+
+**Restart safety fix:** Changed "done" detection to only skip a protein if it has at least
+one non-empty domain search file. Previously, even an empty sentinel file would cause a
+protein to be skipped permanently.
+
+**Phase 2 job command (running overnight in tmux on actin):**
+
+    python scripts/rosetta_search_both_sides.py \
+        --controls benchmark_cache/benchmarks/positives_and_negatives.tsv \
+        --filter-db merizo_pairlist_db/ted_pairlist_filters.db \
+        --pairlist-db merizo_pairlist_db/ted_pairlist \
+        --zhang-db zhang_pairlist_db/zhang_pairlist_db/ted_pairlist \
+        --output-dir benchmark_cache/rosetta_searches \
+        --workers 6
+
+**Expected output structure:** `benchmark_cache/rosetta_searches/{uid}_dom{NN}_search.tsv`
+One file per TED domain per protein. Proteins with no AlphaFold structure get
+`no_domains_in_sqlite` status and are skipped. Results are saved to disk as each domain
+completes — safe to kill and restart at any time.
+
+---
+
+### 2026-04-22 — New Tools Added
+
+| Script | What it does |
+|--------|-------------|
+| `scripts/rosetta_explain_pair.py` | Step-by-step trace of Rosetta Stone scoring for one pair. `--find-examples` ranks all covered positive pairs by score. |
+| `scripts/predict_ppi.py` | End-to-end single-pair prediction tool. `--uid1/--uid2` reads from cache (no merizo runs), `--pdb1/--pdb2` runs merizo search for new proteins. |
+
+**Bug fixed in predict_ppi.py:** `str | None` type hint syntax requires Python 3.10+.
+Cluster runs an older Python. Fixed to use `Optional[str]` from `typing` module.
+
+---
+
+### 2026-04-22 — Understanding: When Does merizo_search Actually Run?
+
+merizo_search only runs at the per-protein search step:
+- Phase 1 benchmark: merizo_search already ran (old experiment cache). Scripts just read TSVs.
+- Phase 2: `rosetta_search_both_sides.py` runs merizo_search for every domain of every
+  benchmark protein. This is the expensive overnight step.
+- `predict_ppi.py --uid1/--uid2`: reads from cache, merizo_search never runs.
+- `predict_ppi.py --pdb1/--pdb2`: runs merizo_search for new arbitrary proteins.
+
+---
+
+### 2026-04-22 — Why Search Against Zhang Sub-DB and Not Full pairlist_db?
+
+The template index keys are Zhang domain names. The bridge-finding step looks for:
+  A in H[P1]  AND  B in H[P2]  AND  (A, B) in template_index
+
+If we searched against the full pairlist_db (millions of domains), H[P1] would contain
+millions of hits — but the bridge-finding step still only uses 2,753 Zhang domain keys.
+The extra hits would all be ignored. Much slower search, zero benefit under current design.
+
+The right fix (ideal but out of scope): build template index from ALL 129M TED pairs,
+search against full pairlist_db. This eliminates circularity and expands coverage to all
+of AFDB. Documented under Limitations.
+
+---
+
+## Current Status (2026-04-22 Evening)
 
 | Task | Status |
 |------|--------|
@@ -232,22 +305,43 @@ Phase 2 results: (to be filled in)
 | Phase 1 benchmark (existing cache) | Done — AUCPR below baseline (circularity) |
 | Threshold sweep (0.3 / 0.5 / 0.7) | Done — no improvement, root cause is coverage |
 | Case example confirmed (LYN × SRC) | Done — algorithm is correct |
+| rosetta_explain_pair.py tool | Done |
 | predict_ppi.py single-pair tool | Done |
-| Phase 2 search (all domains, both sides) | **NOT RUN YET** |
-| Phase 2 benchmark | Not run yet |
+| SQLite pattern bug fix | Done — model_v4TED% → model_v4_TED% |
+| Non-canonical accession filter | Done |
+| Phase 2 search (all domains, both sides) | **RUNNING OVERNIGHT on actin, tmux session "phase2"** |
+| Phase 2 benchmark | Not run yet — run tomorrow after job finishes |
 | Figures | Not generated yet |
 | Report sections updated | Not done yet |
 
-**Next step: run Phase 2 search on cluster (6–18h, use tmux)**
+**Tomorrow morning commands:**
 
-    tmux new -s phase2
-    python scripts/rosetta_search_both_sides.py \
-        --controls benchmark_cache/benchmarks/positives_and_negatives.tsv \
-        --filter-db merizo_pairlist_db/ted_pairlist_filters.db \
-        --pairlist-db merizo_pairlist_db/ted_pairlist \
-        --zhang-db zhang_pairlist_db/zhang_pairlist_db/ted_pairlist \
-        --output-dir benchmark_cache/rosetta_searches \
-        --workers 8
+    # 1. Check how many domain search files were produced
+    ls benchmark_cache/rosetta_searches/ | wc -l
+
+    # 2. Run Phase 2 benchmark
+    python scripts/benchmark_rosetta_stone.py \
+        --search-cache-dir benchmark_cache/rosetta_searches \
+        --template-index benchmark_cache/zhang_template_index.json \
+        --output-dir benchmark_results_rosetta_phase2 \
+        --multi-domain
+
+    # 3. Check results
+    cat benchmark_results_rosetta_phase2/summary.txt
+
+---
+
+## Docs Cleanup (2026-04-22)
+
+Removed the following files which documented the old experiment and are now obsolete:
+- `docs/PROFESSOR_QUESTIONS.md` — Q&A about database transformation (old work)
+- `docs/PRESENTATION_MATERIALS.md` — Filtering system presentation (old work)
+- `docs/TESTING_GUIDE.md` — Filter system testing guide (old work)
+- `docs/TRANSFORM_DATABASE.md` — Database transformation strategy (old work)
+
+Kept:
+- `docs/RESEARCH_NOTES.md` — This file (all new Rosetta Stone work)
+- `docs/plans/2026-04-22-rosetta-stone-pipeline.md` — Implementation plan for new pipeline
 
 ---
 
