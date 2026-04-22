@@ -172,13 +172,15 @@ def load_template_index(path: str) -> dict:
 
 def score_pair_rosetta(p1: str, p2: str,
                        domain_hits: dict,
-                       template_index: dict) -> float:
+                       template_index: dict,
+                       min_bridge_tm: float = 0.0) -> float:
     """
     Rosetta Stone score for a candidate protein pair.
 
     Finds the best bridging template pair (A, B) in the TED pair list where
     P1 has an A-like domain and P2 has a B-like domain (or vice versa).
     Returns min(tm_A, tm_B) for the best bridge, 0.0 if none exists.
+    Only bridges where both TM scores >= min_bridge_tm are considered.
     """
     H1 = domain_hits.get(p1, {})
     H2 = domain_hits.get(p2, {})
@@ -188,23 +190,27 @@ def score_pair_rosetta(p1: str, p2: str,
     best = 0.0
     # Forward: A in H1, B in H2
     for dom_a, tm_a in H1.items():
+        if tm_a < min_bridge_tm:
+            continue
         partners = template_index.get(dom_a)
         if not partners:
             continue
         for dom_b in partners:
             tm_b = H2.get(dom_b)
-            if tm_b is not None:
+            if tm_b is not None and tm_b >= min_bridge_tm:
                 score = min(tm_a, tm_b)
                 if score > best:
                     best = score
     # Reverse: B in H1, A in H2
     for dom_b, tm_b in H1.items():
+        if tm_b < min_bridge_tm:
+            continue
         partners = template_index.get(dom_b)
         if not partners:
             continue
         for dom_a in partners:
             tm_a = H2.get(dom_a)
-            if tm_a is not None:
+            if tm_a is not None and tm_a >= min_bridge_tm:
                 score = min(tm_b, tm_a)
                 if score > best:
                     best = score
@@ -339,9 +345,10 @@ def write_summary(positives, negatives, pos_scores, neg_scores,
             w(f"  Precision @ R=0.5:  {precision_at_recall(precs, recs, 0.5):.4f}")
         w()
         w("--- Parameters ---")
-        w(f"  multi_domain:  {args.multi_domain}")
-        w(f"  wp:            {args.wp}")
-        w(f"  neg_ratio:     {args.neg_ratio}")
+        w(f"  multi_domain:    {args.multi_domain}")
+        w(f"  min_bridge_tm:   {args.min_bridge_tm}")
+        w(f"  wp:              {args.wp}")
+        w(f"  neg_ratio:       {args.neg_ratio}")
 
 
 # ---------------------------------------------------------------------------
@@ -377,10 +384,12 @@ def run(args):
     template_index = load_template_index(args.template_index)
     log.info(f"Template index: {len(template_index):,} domain entries")
 
-    log.info("Scoring pairs...")
-    pos_scores = [score_pair_rosetta(a, b, domain_hits, template_index)
+    log.info(f"Scoring pairs (min_bridge_tm={args.min_bridge_tm})...")
+    pos_scores = [score_pair_rosetta(a, b, domain_hits, template_index,
+                                     args.min_bridge_tm)
                   for a, b in positives]
-    neg_scores = [score_pair_rosetta(a, b, domain_hits, template_index)
+    neg_scores = [score_pair_rosetta(a, b, domain_hits, template_index,
+                                     args.min_bridge_tm)
                   for a, b in negatives]
 
     n_pos_hit = sum(1 for s in pos_scores if s > 0)
@@ -417,6 +426,9 @@ def parse_args():
     p.add_argument("--output-dir", default=DEFAULT_OUTPUT_DIR, dest="output_dir")
     p.add_argument("--multi-domain", action="store_true", dest="multi_domain",
                    help="Cache has per-domain files ({pid}_domNN_search.tsv)")
+    p.add_argument("--min-bridge-tm", type=float, default=0.0,
+                   dest="min_bridge_tm",
+                   help="Minimum TM score required on both bridge sides (e.g. 0.5)")
     p.add_argument("--neg-ratio", type=int, default=5, dest="neg_ratio")
     p.add_argument("--wp", type=float, default=0.01)
     return p.parse_args()
