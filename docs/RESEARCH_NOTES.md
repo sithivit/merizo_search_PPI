@@ -54,13 +54,86 @@ P2 must carry domains that resemble the two sides of a known co-occurring pair.
 |--------|---------|
 | scripts/rosetta_dump_zhang_domains.py | Dump domain names from Zhang sub-DB |
 | scripts/rosetta_build_template_index.py | Build TED template pair index (JSON) |
-| scripts/rosetta_search_both_sides.py | Search all domains of all benchmark proteins |
+| scripts/rosetta_search_both_sides.py | Search all domains of all benchmark proteins (Phase 2) |
 | scripts/benchmark_rosetta_stone.py | Rosetta Stone cross-join benchmark |
 | scripts/rosetta_make_mini_sample.py | Create small sample for pipeline validation |
+| scripts/rosetta_explain_pair.py | Step-by-step scoring trace for one protein pair |
+| scripts/predict_ppi.py | End-to-end single-pair prediction tool |
 | tests/test_rosetta_template_index.py | Unit tests: index builder (3 tests) |
 | tests/test_benchmark_rosetta_stone.py | Unit tests: scoring functions (6 tests) |
 
 All 9 unit tests pass.
+
+---
+
+## Pipeline Architecture
+
+### End-to-end flow for predicting whether protein A interacts with protein B
+
+```
+[One-time setup — already done]
+TED pair list (129M pairs) + Zhang sub-DB domain names
+        → rosetta_build_template_index.py
+        → zhang_template_index.json
+           {"domainX": ["domainY", "domainZ", ...], ...}
+           = "which domain pairs co-occur in the same fusion protein"
+
+[Per-protein search — run once, results cached to disk]
+For each benchmark protein P:
+  Extract TED domain structures from merizo_pairlist_db binary
+        → run: merizo search domain.pdb zhang_db/ output/ tmp/
+        → saves: benchmark_cache/searches/{P}_search.tsv          (Phase 1, old cache)
+                 benchmark_cache/rosetta_searches/{P}_domNN_search.tsv  (Phase 2)
+  Content of TSV: one row per Zhang template domain hit, columns include TM score
+
+[Scoring — fast, no merizo needed]
+For pair (P1, P2):
+  H[P1] = {zhang_domain: best_TM}  ← read from P1's cached TSV
+  H[P2] = {zhang_domain: best_TM}  ← read from P2's cached TSV
+  For every template pair (A, B) in template_index:
+    if A in H[P1] and B in H[P2]:
+      bridge_score = min(H[P1][A], H[P2][B])
+  Final score = max over all bridges
+```
+
+### Key point: merizo_search only runs at the "per-protein search" step
+
+- Phase 1 benchmark: merizo_search already ran (old experiment cache). We just read TSVs.
+- Phase 2 benchmark: `rosetta_search_both_sides.py` runs merizo_search for every domain
+  of every benchmark protein. This is the expensive step (~6–18h on cluster).
+- `predict_ppi.py --uid1/--uid2`: reads cache, no merizo_search.
+- `predict_ppi.py --pdb1/--pdb2`: runs merizo_search for new proteins not in the cache.
+
+---
+
+## Database Roles
+
+| Database | Location | Size | Role |
+|----------|----------|------|------|
+| Zhang sub-DB | `zhang_pairlist_db/zhang_pairlist_db/ted_pairlist` | 2,753 domains | **Search TARGET** — what we search each protein against |
+| Full TED pairlist DB | `merizo_pairlist_db/ted_pairlist` | Millions of domains (full human AFDB) | Domain structure extraction (Phase 2) + source of the 129M pair list |
+
+### Why search against Zhang sub-DB rather than full pairlist_db?
+
+The template index keys are Zhang domain names. When scoring a bridge (A in H[P1], B in H[P2]),
+A and B must exist in the template index. Since the template index only contains Zhang domains,
+H[P1] and H[P2] must be populated with Zhang domain hits — which requires searching against
+the Zhang sub-DB.
+
+If we searched against the full pairlist_db, H[P1] would contain millions of hits from all of
+AFDB. The bridge-finding step would still only use the 2,753 Zhang domain keys, so the extra
+hits would be ignored. Searching the full DB would be orders of magnitude slower with no benefit
+under the current template index design.
+
+### The right fix (future work / key limitation)
+
+Build the template index from ALL 129M TED pairs (not filtered to Zhang domains), and search
+against the full pairlist_db. This would:
+- Eliminate the circularity problem (templates no longer come from the same proteins we evaluate)
+- Expand coverage to all of AFDB, not just 1,086 Zhang benchmark proteins
+- Require significantly more compute (larger index in memory, much longer searches)
+
+This is documented under Limitations.
 
 ---
 
@@ -123,13 +196,18 @@ Phase 2 results: (to be filled in)
 1. **Template library restricted to Zhang proteins:** The template index only contains
    co-occurring domain pairs from Zhang benchmark proteins (because we search against the
    Zhang sub-DB). A true cross-organism Rosetta Stone would use templates from all 129M+
-   TED pairs, dramatically expanding coverage. This is a computational scope limitation,
-   not a conceptual flaw in the algorithm.
+   TED pairs across all of AFDB, dramatically expanding coverage and removing circularity.
+   This is a computational scope limitation, not a conceptual flaw in the algorithm.
 
-2. **Proteins absent from TED entirely:** Proteins with no AlphaFold2 structure in TED
-   cannot be covered by any domain-based method. This is a fundamental ceiling.
+2. **Circularity in Phase 1 evaluation:** The template index is derived from the same
+   Zhang proteins used for evaluation. This means almost any benchmark protein pair finds
+   a bridge, making the score non-discriminative. Phase 2 partially mitigates this by
+   searching all domains, but the fundamental fix is a cross-organism template index.
 
-3. **Single structural signal:** No co-expression, co-localisation, or evolutionary
+3. **Proteins absent from TED entirely:** Proteins with no AlphaFold2 structure in TED
+   cannot be covered by any domain-based method. This is a hard ceiling.
+
+4. **Single structural signal:** No co-expression, co-localisation, or evolutionary
    co-variation signals are used. Real PPI prediction systems combine multiple signals.
 
 ---
@@ -140,6 +218,36 @@ Phase 2 results: (to be filled in)
 - Using JSON (not binary serialisation) for template index — safer and portable
 - Phase 1 validates algorithm on existing cache before expensive re-searches
 - Using tmux for all long-running cluster jobs
+- Search against Zhang sub-DB (not full pairlist_db) — consistent with template index keys
+- Added `--min-bridge-tm` threshold to benchmark_rosetta_stone.py to filter weak bridges
+
+---
+
+## Current Status (2026-04-22)
+
+| Task | Status |
+|------|--------|
+| Algorithm design (Rosetta Stone) | Done |
+| Template index built | Done — 1,756 pairs, 2,753 entries |
+| Phase 1 benchmark (existing cache) | Done — AUCPR below baseline (circularity) |
+| Threshold sweep (0.3 / 0.5 / 0.7) | Done — no improvement, root cause is coverage |
+| Case example confirmed (LYN × SRC) | Done — algorithm is correct |
+| predict_ppi.py single-pair tool | Done |
+| Phase 2 search (all domains, both sides) | **NOT RUN YET** |
+| Phase 2 benchmark | Not run yet |
+| Figures | Not generated yet |
+| Report sections updated | Not done yet |
+
+**Next step: run Phase 2 search on cluster (6–18h, use tmux)**
+
+    tmux new -s phase2
+    python scripts/rosetta_search_both_sides.py \
+        --controls benchmark_cache/benchmarks/positives_and_negatives.tsv \
+        --filter-db merizo_pairlist_db/ted_pairlist_filters.db \
+        --pairlist-db merizo_pairlist_db/ted_pairlist \
+        --zhang-db zhang_pairlist_db/zhang_pairlist_db/ted_pairlist \
+        --output-dir benchmark_cache/rosetta_searches \
+        --workers 8
 
 ---
 
