@@ -82,7 +82,7 @@ def get_protein_domains(uid: str, filter_db_path: str) -> list:
     """
     conn = sqlite3.connect(filter_db_path)
     cursor = conn.cursor()
-    pattern = f"AF-{uid}-F1-model_v4TED%"
+    pattern = f"AF-{uid}-F1-model_v4_TED%"
     cursor.execute(
         "SELECT domain_id, domain_idx FROM domains WHERE domain_id LIKE ?",
         (pattern,)
