@@ -59,9 +59,31 @@ _AA_1TO3 = {
 }
 
 
+def is_canonical_uniprot(uid: str) -> bool:
+    """
+    Return True only for canonical Swiss-Prot accessions (reviewed UniProt entries).
+    These are the only ones with AlphaFold structures in TED using the expected naming.
+    Canonical accessions are exactly 6 characters and follow one of two patterns:
+      [OPQ][0-9][A-Z0-9]{3}[0-9]   e.g. P07948, Q8WYA1, O75791
+      [A-NR-Z][0-9][A-Z][A-Z0-9]{2}[0-9]  e.g. A2BC19
+    Non-canonical (TrEMBL) accessions (A0A075B6H7, B7Z3J9, etc.) are longer or
+    follow different patterns and are not in the TED pairlist database.
+    """
+    import re
+    return bool(re.fullmatch(
+        r'[OPQ][0-9][A-Z0-9]{3}[0-9]|[A-NR-Z][0-9][A-Z][A-Z0-9]{2}[0-9]',
+        uid
+    ))
+
+
 def get_all_benchmark_proteins(controls_path: str) -> set:
-    """All unique proteins from both sides of ALL Zhang pairs (positive + negative)."""
+    """
+    All unique canonical proteins from both sides of ALL Zhang pairs.
+    Non-canonical accessions (TrEMBL isoforms etc.) are excluded — they have no
+    AlphaFold structures in TED and would all return no_domains_in_sqlite.
+    """
     proteins = set()
+    skipped = 0
     with open(controls_path) as fh:
         next(fh)
         for line in fh:
@@ -70,8 +92,13 @@ def get_all_benchmark_proteins(controls_path: str) -> set:
                 continue
             pair, _cat = line.split("\t")
             a, b = pair.split("_")
-            proteins.add(a)
-            proteins.add(b)
+            for uid in (a, b):
+                if is_canonical_uniprot(uid):
+                    proteins.add(uid)
+                else:
+                    skipped += 1
+    if skipped:
+        log.info(f"Skipped {skipped:,} non-canonical accessions (no AlphaFold in TED)")
     return proteins
 
 
@@ -192,16 +219,19 @@ def process_protein(uid: str, filter_db: str, pairlist_db: str,
 def run(args):
     os.makedirs(args.output_dir, exist_ok=True)
 
-    log.info("Collecting all unique proteins from Zhang benchmark (both sides)...")
+    log.info("Collecting all unique canonical proteins from Zhang benchmark (both sides)...")
     all_proteins = get_all_benchmark_proteins(args.controls)
-    log.info(f"Total unique proteins: {len(all_proteins):,}")
+    log.info(f"Total canonical proteins: {len(all_proteins):,}")
 
-    # Skip proteins that already have any cached domain search file
+    # A protein is "done" only if it has at least one non-empty domain search file.
+    # Per-domain files are checked individually inside process_protein, so a protein
+    # with partial results will resume from the first missing domain automatically.
     done = {fname.split("_dom")[0]
             for fname in os.listdir(args.output_dir)
-            if fname.endswith("_search.tsv")}
+            if fname.endswith("_search.tsv")
+            and os.path.getsize(os.path.join(args.output_dir, fname)) > 0}
     todo = sorted(all_proteins - done)
-    log.info(f"Already done: {len(done):,}, remaining: {len(todo):,}")
+    log.info(f"Already done (have results): {len(done):,}, remaining: {len(todo):,}")
 
     total = len(todo)
     log.info(f"Running with {args.workers} workers, topk={args.topk}...")
