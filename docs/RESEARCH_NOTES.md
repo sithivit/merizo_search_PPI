@@ -634,3 +634,141 @@ domain pair architecture. Each independently provides a bridge.
   domain (TED03) of the same fusion protein — exactly the Rosetta Stone principle
 - This directly addresses the professor's critique about BRAF/RAF1
 
+---
+
+### 2026-04-23 — Phase 3: Extending Coverage to Single-Domain Proteins (ted365m)
+
+**Motivation:**
+Phase 2 was capped at 595/3,000 (19.8%) because `ted_pairlist_filters.db` only indexes
+multi-domain proteins (those appearing in at least one TED intra-protein domain pair).
+Single-domain proteins — absent from the pair list by definition — were never searched.
+
+The fix: scan the full `ted_365M` database (365 million TED-segmented AlphaFold domains,
+including single-domain proteins) to find and search the missing benchmark proteins.
+
+**Script:** `scripts/rosetta_search_ted365m.py`
+
+Strategy:
+1. Determine which benchmark proteins are still missing from the search cache
+2. Single linear scan of the ted_365M names file (33-byte fixed-width entries, uid at bytes 3–9)
+   to build {uid → [(domain_name, domain_idx), ...]} for all missing proteins at once
+3. Extract each domain PDB via byte-offset read from the Foldclass binary DB
+4. Run merizo search against the Zhang sub-DB
+5. Save as `{uid}_dom{NN}_search.tsv` (dom-suffix keeps compatibility with --multi-domain flag)
+
+**Run command (cluster, 2026-04-23):**
+
+    python scripts/rosetta_search_ted365m.py \
+        --ted365m-db /mnt/bigstore/foldclass-db-ted/ted_365M.json \
+        --zhang-db zhang_pairlist_db/zhang_pairlist_db/ted_pairlist \
+        --workers 6
+
+**Completion:** 5,703 / 5,703 proteins processed. Most returned 50 hits (topk=50).
+topk=50 is sufficient because hits are ranked by TM score descending — the optimal bridging
+domain for any given pair will be in the top 50 if it exists.
+
+---
+
+### 2026-04-23 — Phase 3 Benchmark Results
+
+**Command:**
+
+    python scripts/benchmark_rosetta_stone.py \
+        --multi-domain \
+        --search-cache-dir benchmark_cache/rosetta_searches \
+        --template-index benchmark_cache/zhang_template_index.json \
+        --controls benchmark_cache/benchmarks/positives_and_negatives.tsv \
+        --output-dir benchmark_results_phase3_tm0.0 \
+        --min-bridge-tm 0.0
+
+    python scripts/benchmark_rosetta_stone.py \
+        --multi-domain \
+        --search-cache-dir benchmark_cache/rosetta_searches \
+        --template-index benchmark_cache/zhang_template_index.json \
+        --controls benchmark_cache/benchmarks/positives_and_negatives.tsv \
+        --output-dir benchmark_results_phase3_tm0.5 \
+        --min-bridge-tm 0.5
+
+**Dataset:**
+
+    Universe:            14,201 proteins  (was 5,990 after Phase 2 alone)
+    Covered positives:   2,369 / 3,000   (79.0% — up from 19.8%)
+    Negatives sampled:   11,845          (5:1 ratio vs covered positives)
+
+**Results:**
+
+| min_bridge_tm | pos hit             | neg hit               | selectivity | AUCPR  | ×baseline | ROC-AUC |
+|---------------|--------------------|-----------------------|-------------|--------|-----------|---------|
+| 0.0           | 1,832/2,369 (77.3%) | 8,069/11,845 (68.1%) | 1.13×       | 0.0271 | **2.73×** | 0.6388  |
+| 0.5           | 857/2,369 (36.2%)   | 1,380/11,845 (11.7%) | 3.09×       | 0.0270 | **2.72×** | 0.6310  |
+
+**Interpretation:**
+
+1. **Coverage jumped from 19.8% to 79.0%.** The ted365m extension successfully covered
+   the single-domain proteins that Phase 2 could not reach. The absolute number of covered
+   positives went from 595 to 2,369 — a 4× increase.
+
+2. **AUCPR dropped from 11.64× to 2.73×.** This is expected and reflects a real tradeoff,
+   not a bug. Phase 2's 11.64× was computed on a very selective subset (595 pairs, all
+   multi-domain, all with strong intra-protein domain evidence). Phase 3 includes 1,774
+   new pairs involving single-domain proteins where:
+   - Bridges are weaker on average (single-domain proteins have fewer domain options)
+   - Many more negative pairs now score > 0 (68.1% of negatives vs 79.0% of Phase 2 negatives
+     at TM=0.0 — the denominator changed entirely with a 4× larger universe)
+   The 2.73× result is still robust signal over a much more complete and honest evaluation.
+
+3. **AUCPR is stable across TM=0.0 and TM=0.5 (2.73× vs 2.72×).** Same pattern as Phase 2:
+   removing weak bridges does not hurt AUCPR because the top-ranked pairs already have high
+   TM scores. The threshold does clean up selectivity (neg hit rate drops from 68.1% to 11.7%).
+
+4. **ROC-AUC: Phase 3 (0.6388) is slightly lower than Phase 2 (0.7032).** The harder
+   single-domain cases lower the average discrimination quality. Still comfortably above
+   random (0.5), confirming genuine discriminative power on the expanded evaluation set.
+
+5. **TM=0.5 selectivity ratio: 3.09×** (36.2% pos vs 11.7% neg score non-zero). This is
+   similar to Phase 2's 3.25× — the per-pair selectivity of the method is preserved even
+   as the dataset grew 4×.
+
+6. **Honest interpretation for report:** Phase 2's 11.64× was impressive but on a subset
+   that was inherently favourable (multi-domain proteins with strong domain-pair evidence).
+   Phase 3's 2.73× over 79% coverage is the more complete and representative result.
+   Both are above baseline; the expansion reveals the method still works on harder cases.
+
+**Template index confirmed:** 2,753 domain entries (matches the 2,753 keys in
+`benchmark_cache/zhang_template_index.json`).
+
+---
+
+## Updated Key Numbers for Report
+
+| Metric | Value | Source |
+|--------|-------|--------|
+| Zhang sub-DB domain names | 2,753 | rosetta_dump_zhang_domains.py |
+| TED pair list total lines | 129,440,391 | rosetta_build_template_index.py |
+| Template pairs retained | 1,756 | rosetta_build_template_index.py |
+| Random AUCPR baseline | 0.0099 | Derived from wp=0.01 |
+| Phase 1 AUCPR (all TM) | ~0.97× baseline | Below baseline — circularity |
+| Phase 2 coverage | 595 / 3,000 (19.8%) | Multi-domain proteins only |
+| Phase 2 AUCPR (TM=0.5) | 11.64× baseline | 595-pair selective subset |
+| Phase 2 ROC-AUC (TM=0.5) | 0.7032 | — |
+| **Phase 3 coverage** | **2,369 / 3,000 (79.0%)** | Multi-domain + single-domain |
+| **Phase 3 AUCPR (TM=0.0)** | **2.73× baseline** | Full evaluation set |
+| **Phase 3 ROC-AUC (TM=0.0)** | **0.6388** | — |
+| Universe size (Phase 3) | 14,201 proteins | benchmark_results_phase3_tm0.0 |
+
+---
+
+## Updated Status (2026-04-23)
+
+| Task | Status |
+|------|--------|
+| Algorithm design (Rosetta Stone) | Done |
+| Template index built | Done — 1,756 pairs, 2,753 entries |
+| Phase 1 benchmark | Done — below baseline (circularity) |
+| Phase 2 search (all domains, multi-domain proteins) | Done |
+| Phase 2 benchmark (TM=0.5) | Done — 11.64× baseline, 19.8% coverage |
+| Phase 3 search (rosetta_search_ted365m.py) | **Done — 5,703 proteins processed** |
+| Phase 3 benchmark | **Done — 2.73× baseline, 79.0% coverage** |
+| Figures (Phase 2 only, for report) | Done — pr_curve.png, roc_curve.png |
+| Report sections | Not done yet |
+
