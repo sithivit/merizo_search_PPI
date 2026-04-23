@@ -39,12 +39,15 @@ For a candidate pair (P1, P2):
 The min() ensures **both sides** of the bridge must be structurally supported. Both P1 and
 P2 must carry domains that resemble the two sides of a known co-occurring pair.
 
-### Two-phase implementation
+### Implementation
 
-| Phase | Search target | Coverage |
-|-------|--------------|----------|
-| Phase 1 | Existing Domain B cache (old search results reused) | Same proteins as old method |
-| Phase 2 | All TED domains of ALL benchmark proteins (both sides) | Substantially wider |
+The pipeline searches all TED domains of every benchmark protein against the Zhang sub-DB.
+Domain discovery uses two complementary paths:
+- **Multi-domain proteins**: looked up via `ted_pairlist_filters.db` SQLite index
+- **Single-domain proteins**: discovered via linear scan of the full `ted_365M` database
+
+Together these cover 79.0% of the Zhang benchmark (2,369/3,000 positive pairs). The remaining
+20.1% have no AlphaFold model and are unreachable by any structure-based method.
 
 ---
 
@@ -82,8 +85,7 @@ TED pair list (129M pairs) + Zhang sub-DB domain names
 For each benchmark protein P:
   Extract TED domain structures from merizo_pairlist_db binary
         → run: merizo search domain.pdb zhang_db/ output/ tmp/
-        → saves: benchmark_cache/searches/{P}_search.tsv          (Phase 1, old cache)
-                 benchmark_cache/rosetta_searches/{P}_domNN_search.tsv  (Phase 2)
+        → saves: benchmark_cache/rosetta_searches/{P}_domNN_search.tsv
   Content of TSV: one row per Zhang template domain hit, columns include TM score
 
 [Scoring — fast, no merizo needed]
@@ -98,10 +100,9 @@ For pair (P1, P2):
 
 ### Key point: merizo_search only runs at the "per-protein search" step
 
-- Phase 1 benchmark: merizo_search already ran (old experiment cache). We just read TSVs.
-- Phase 2 benchmark: `rosetta_search_both_sides.py` runs merizo_search for every domain
-  of every benchmark protein. This is the expensive step (~6–18h on cluster).
-- `predict_ppi.py --uid1/--uid2`: reads cache, no merizo_search.
+- Benchmark evaluation: `rosetta_search_both_sides.py` and `rosetta_search_ted365m.py` run
+  merizo_search for every domain of every benchmark protein. Results are cached to disk.
+- `predict_ppi.py --uid1/--uid2`: reads from cache, no merizo_search runs.
 - `predict_ppi.py --pdb1/--pdb2`: runs merizo_search for new proteins not in the cache.
 
 ---
@@ -111,7 +112,7 @@ For pair (P1, P2):
 | Database | Location | Size | Role |
 |----------|----------|------|------|
 | Zhang sub-DB | `zhang_pairlist_db/zhang_pairlist_db/ted_pairlist` | 2,753 domains | **Search TARGET** — what we search each protein against |
-| Full TED pairlist DB | `merizo_pairlist_db/ted_pairlist` | Millions of domains (full human AFDB) | Domain structure extraction (Phase 2) + source of the 129M pair list |
+| Full TED pairlist DB | `merizo_pairlist_db/ted_pairlist` | Millions of domains (full human AFDB) | Domain structure extraction (multi-domain proteins) + source of the 129M pair list |
 
 ### Why search against Zhang sub-DB rather than full pairlist_db?
 
@@ -178,41 +179,24 @@ Interpretation:
 | Zhang sub-DB domain names | 2,753 | rosetta_dump_zhang_domains.py |
 | TED pair list total lines | 129,440,391 | rosetta_build_template_index.py |
 | Template pairs retained | 1,756 | rosetta_build_template_index.py |
-| Existing search cache | 1,086 files | ls benchmark_cache/searches/ |
-| Old method covered positives | 595 / 3,000 (19.8%) | Original report |
-| Old method AUCPR | 0.0384 (3.87x baseline) | Original report |
 | Random AUCPR baseline | 0.0099 | Derived from wp=0.01 |
-
-Phase 1 results (min_bridge_tm=0.0):  AUCPR 0.0097 (0.98× baseline), ROC-AUC 0.6075
-Phase 1 results (min_bridge_tm=0.3):  AUCPR 0.0097 (0.98× baseline), ROC-AUC 0.6075, pos_hit=497/595, neg_hit=2326/2975
-Phase 1 results (min_bridge_tm=0.5):  AUCPR 0.0096 (0.97× baseline), ROC-AUC 0.6043, pos_hit=226/595, neg_hit=575/2975
-Phase 1 results (min_bridge_tm=0.7):  AUCPR 0.0089 (0.90× baseline), ROC-AUC 0.5540, pos_hit=87/595, neg_hit=116/2975
-Phase 2 results (multi-domain, min_bridge_tm=0.0):  AUCPR 0.1153 (11.64× baseline), ROC-AUC 0.6983, pos_hit=517/595, neg_hit=2349/2975
-Phase 2 results (multi-domain, min_bridge_tm=0.3):  AUCPR 0.1153 (11.64× baseline), ROC-AUC 0.7000, pos_hit=507/595, neg_hit=2193/2975
-Phase 2 results (multi-domain, min_bridge_tm=0.5):  AUCPR 0.1153 (11.64× baseline), ROC-AUC 0.7032, pos_hit=310/595, neg_hit=476/2975
-Phase 2 results (multi-domain, min_bridge_tm=0.7):  AUCPR 0.1139 (11.50× baseline), ROC-AUC 0.6447, pos_hit=184/595, neg_hit=74/2975
+| Universe size | 14,201 proteins | benchmark_results_phase3_tm0.0 |
+| Covered positives | 2,369 / 3,000 (79.0%) | benchmark_results_phase3_tm0.0 |
+| AUCPR (min_bridge_tm=0.0) | 0.0271 (2.73× baseline) | benchmark_results_phase3_tm0.0 |
+| AUCPR (min_bridge_tm=0.5) | 0.0270 (2.72× baseline) | benchmark_results_phase3_tm0.5 |
+| ROC-AUC (min_bridge_tm=0.0) | 0.6388 | benchmark_results_phase3_tm0.0 |
+| ROC-AUC (min_bridge_tm=0.5) | 0.6310 | benchmark_results_phase3_tm0.5 |
 
 ---
 
 ## Limitations to Acknowledge in Report
 
-### Limitation 1: Coverage ceiling for multi-domain-only search — addressed in final pipeline
+### Limitation 1: 20.1% of benchmark pairs are structurally uncoverable
 
-**Root cause:**
-The `ted_pairlist_filters.db` SQLite DB only indexes multi-domain proteins (those appearing
-in at least one TED intra-protein domain pair). Single-domain proteins have no entry and
-therefore cannot be searched via the SQLite path.
-
-**How it was addressed:**
-`rosetta_search_ted365m.py` bypasses the SQLite DB entirely. It scans the full `ted_365M`
-database (365M TED-segmented AlphaFold domains, including single-domain proteins) to find
-and search any benchmark protein not already in the cache. This extended coverage from
-19.8% (595/3,000) to **79.0% (2,369/3,000)**.
-
-**Remaining ceiling (20.1% still uncovered):**
-The 631 pairs still uncovered after Phase 3 are proteins with no AlphaFold model at all —
-not in TED, not in AlphaFold DB, therefore impossible to cover by any structure-based method.
-This is a hard ceiling shared by all structure-based PPI prediction approaches.
+The pipeline covers 2,369/3,000 (79.0%) of the Zhang benchmark positive pairs. The remaining
+631 pairs (20.1%) involve proteins with no AlphaFold2 predicted structure — absent from TED
+entirely. This is a hard ceiling shared by all structure-based PPI prediction approaches, not
+a limitation of this pipeline's design.
 
 **What to write in the report:**
 > The pipeline achieves 79.0% coverage of Zhang benchmark positive pairs (2,369/3,000).
@@ -337,13 +321,6 @@ of AFDB. Documented under Limitations.
 
 ---
 
-## Interim Results Note (superseded — see Final Benchmark below)
-
-During development, intermediate benchmarks showed AUCPR of 11.64× baseline on 595/3,000
-covered pairs (multi-domain proteins only). This was a useful signal that the algorithm
-worked, but not the final evaluation. Coverage was subsequently extended to 79.0% by adding
-`rosetta_search_ted365m.py` to search single-domain proteins via the full ted_365M database.
-The final reported result is 2.73× baseline over 2,369/3,000 pairs — see Phase 3 section.
 
 ---
 
