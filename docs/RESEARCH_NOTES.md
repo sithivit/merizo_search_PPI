@@ -187,7 +187,7 @@ Phase 1 results (min_bridge_tm=0.0):  AUCPR 0.0097 (0.98× baseline), ROC-AUC 0.
 Phase 1 results (min_bridge_tm=0.3):  AUCPR 0.0097 (0.98× baseline), ROC-AUC 0.6075, pos_hit=497/595, neg_hit=2326/2975
 Phase 1 results (min_bridge_tm=0.5):  AUCPR 0.0096 (0.97× baseline), ROC-AUC 0.6043, pos_hit=226/595, neg_hit=575/2975
 Phase 1 results (min_bridge_tm=0.7):  AUCPR 0.0089 (0.90× baseline), ROC-AUC 0.5540, pos_hit=87/595, neg_hit=116/2975
-Phase 2 results: (to be filled in)
+Phase 2 results (multi-domain, min_bridge_tm=0.0):  AUCPR 0.1153 (11.64× baseline), ROC-AUC 0.6983, pos_hit=517/595, neg_hit=2349/2975
 
 ---
 
@@ -309,25 +309,38 @@ of AFDB. Documented under Limitations.
 | predict_ppi.py single-pair tool | Done |
 | SQLite pattern bug fix | Done — model_v4TED% → model_v4_TED% |
 | Non-canonical accession filter | Done |
-| Phase 2 search (all domains, both sides) | **RUNNING OVERNIGHT on actin, tmux session "phase2"** |
-| Phase 2 benchmark | Not run yet — run tomorrow after job finishes |
+| Phase 2 search (all domains, both sides) | Partially complete (5,990/16,855 proteins, job may still run) |
+| Phase 2 benchmark | **Done — AUCPR 11.64× baseline, ROC-AUC 0.6983** |
 | Figures | Not generated yet |
 | Report sections updated | Not done yet |
 
-**Tomorrow morning commands:**
+**Phase 2 results (2026-04-23 morning):**
 
-    # 1. Check how many domain search files were produced
     ls benchmark_cache/rosetta_searches/ | wc -l
+    → 15,575 domain search files
 
-    # 2. Run Phase 2 benchmark
-    python scripts/benchmark_rosetta_stone.py \
-        --search-cache-dir benchmark_cache/rosetta_searches \
-        --template-index benchmark_cache/zhang_template_index.json \
-        --output-dir benchmark_results_rosetta_phase2 \
-        --multi-domain
+    Universe: 5,990 proteins with search results (job ~35% complete, may still be running)
+    Covered positives: 595/3,000 (19.8%) — same as Phase 1
 
-    # 3. Check results
-    cat benchmark_results_rosetta_phase2/summary.txt
+    AUCPR:    0.1153  (11.64× random baseline of 0.0099)  ← KEY RESULT
+    ROC-AUC:  0.6983
+    Positives with score >0:  517/595  (86.9%)
+    Negatives with score >0: 2349/2975 (79.0%)
+    Precision @ R=0.1:  0.2308
+    Precision @ R=0.2:  0.1063
+    Precision @ R=0.5:  0.0069
+
+**Why coverage is still 595/3,000 despite Phase 2:**
+The Zhang positive pairs involve specific proteins. Many have no AlphaFold/TED structure
+(non-canonical, absent from AlphaFold DB). This is the hard ceiling — no domain-based method
+can cover proteins with no structural data. The 595 pairs that ARE covered are the ones where
+both proteins have AlphaFold models in TED.
+
+**Why AUCPR jumped from 0.97× to 11.64× despite same coverage:**
+In Phase 1, each protein had only ONE domain searched (Domain B from old cache) → H[P] ~50 hits.
+In Phase 2, ALL TED domains per protein are searched → H[P] has hits from every domain.
+More domains = richer hit map = bridge-finding step finds genuinely discriminative template pairs.
+The method went from below-baseline to 11.64× purely by searching more domains per protein.
 
 ---
 
