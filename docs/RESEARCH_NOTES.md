@@ -336,6 +336,30 @@ The Zhang positive pairs involve specific proteins. Many have no AlphaFold/TED s
 can cover proteins with no structural data. The 595 pairs that ARE covered are the ones where
 both proteins have AlphaFold models in TED.
 
+**Why only 5,990 proteins have search results out of ~16,855 canonical proteins processed:**
+
+The Phase 2 job processed all 16,855 canonical UniProt accessions from the controls file.
+Of these, only 5,990 produced non-empty domain search files. The remaining ~10,865 returned
+`no_domains_in_sqlite`. This happens for two reasons:
+
+1. **Not in the TED SQLite metadata DB (`ted_pairlist_filters.db`):**
+   This SQLite DB was built from the TED pair list — it only indexes proteins that appear as
+   multi-domain proteins with at least one intra-protein domain-domain contact. Proteins that
+   are single-domain (only one TED segment) are NOT in this pair list and therefore NOT in the
+   SQLite DB. When queried, they return no rows → `no_domains_in_sqlite` → no search runs.
+
+2. **No AlphaFold model at all:**
+   Some canonical UniProt accessions simply have no AlphaFold2 predicted structure. Without a
+   structure, TED cannot segment them into domains, so they are absent from TED entirely.
+
+In other words: the `merizo_pairlist_db/ted_pairlist_filters.db` is the bottleneck. It was
+designed to index the pair list (multi-domain proteins only). Single-domain proteins that
+appear in the Zhang benchmark positives cannot be searched because their domain indices are
+not in this DB.
+
+A fuller implementation would use a complete TED domain index covering ALL AlphaFold proteins
+(not just those in the pair list), allowing single-domain proteins to be searched too.
+
 **Why AUCPR jumped from 0.97× to 11.64× despite same coverage:**
 In Phase 1, each protein had only ONE domain searched (Domain B from old cache) → H[P] ~50 hits.
 In Phase 2, ALL TED domains per protein are searched → H[P] has hits from every domain.
