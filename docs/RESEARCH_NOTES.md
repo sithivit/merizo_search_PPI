@@ -363,7 +363,7 @@ of AFDB. Documented under Limitations.
 | Non-canonical accession filter | Done |
 | Phase 2 search (all domains, both sides) | Partially complete (5,990/16,855 proteins, job may still run) |
 | Phase 2 benchmark | **Done — AUCPR 11.64× baseline, ROC-AUC 0.6983** |
-| Figures | Not generated yet |
+| Figures (Phase 2 only, for report) | Done — pr_curve.png, roc_curve.png in figures/ |
 | Report sections updated | Not done yet |
 
 **Phase 2 results (2026-04-23 morning):**
@@ -491,6 +491,65 @@ Kept:
 - **Phase 2 (all domains, both sides) is needed for meaningful results.**
 - ROC-AUC 0.60 at TM=0.5 confirms the method IS discriminative — just not enough data
   in Phase 1 to drive AUCPR above baseline.
+
+---
+
+### 2026-04-23 — Final Figures (Phase 2 only, for report)
+
+Both figures regenerated with Phase 2 results only. Phase 1 excluded from report — it used a
+broken one-domain-per-protein cache (same as the old discredited method), not a proper Rosetta
+Stone implementation. Including it would misrepresent the algorithm's capability.
+
+Generated with:
+
+    python scripts/plot_benchmark_curves.py \
+        --pair-scores benchmark_results_rosetta_phase2_final/pair_scores.tsv \
+        --labels "Rosetta Stone (paired-domain transfer)" \
+        --output-dir figures/
+
+---
+
+**`figures/pr_curve.png` — Weighted Precision–Recall Curve (wp=0.01)**
+
+AUCPR = 0.1153, 11.6× random baseline (0.0099).
+
+Shape of the curve:
+- **Recall 0–0.08:** Precision jumps to near 1.0 — the very highest-scoring pairs are almost
+  exclusively true positives. This is the strongest part of the signal.
+- **Recall 0.08–0.10:** Sharp drop then stabilisation around 0.2–0.25. This step corresponds
+  to the transition from the top-confidence bridges (Src-family kinases etc.) to the next tier
+  of similar-family interactions.
+- **Recall 0.10–0.30:** Gradual staircase descent from ~0.2 down to near baseline. The jagged
+  steps reflect the discrete score distribution (many pairs share the same TM score value).
+- **Recall 0.30–1.0:** Precision falls to and stays at random baseline. These are the uncovered
+  positives (1,086 of 1,500 covered positives with score=0, plus the 2,405 pairs outside the
+  coverage ceiling). All score 0 so they rank interleaved with negatives.
+
+The hard cutoff at recall ≈ 0.20 (= 595/3,000) is exactly the coverage ceiling. After that,
+no covered positives remain and the method cannot distinguish the rest from negatives.
+
+Key strength to report: at low recall the method is extremely precise. For the top 5–8% of
+recall, precision is near 100% — meaning if the method predicts an interaction with a high
+Rosetta Stone score, it is almost certainly a true positive. This is the useful operating
+region in practice (e.g. recommending a small list of candidate interactions to validate in lab).
+
+---
+
+**`figures/roc_curve.png` — ROC Curve**
+
+AUC = 0.6983 (random baseline = 0.5000).
+
+Shape of the curve:
+- **FPR 0–0.15:** Steep initial rise — TPR reaches ~0.55 while only 15% of negatives are
+  accepted. Confirms strong discrimination at the high-confidence end of the score range.
+- **FPR 0.15–1.0:** Smooth, consistent curve above the diagonal throughout. No region where
+  the method dips back to random — the rank ordering is meaningful all the way through.
+- At FPR=0.5, TPR≈0.75 — the method recovers 75% of positives before half the negatives
+  have been accepted. This is solid performance for a purely structural approach.
+
+ROC-AUC of 0.70 is a good result for a zero-shot structural homology method with no training,
+no co-expression or sequence coevolution signals, and only 19.8% coverage. The curve confirms
+the method is genuinely discriminative, not just producing artefact scores.
 
 ---
 
