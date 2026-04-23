@@ -193,22 +193,74 @@ Phase 2 results (multi-domain, min_bridge_tm=0.0):  AUCPR 0.1153 (11.64× baseli
 
 ## Limitations to Acknowledge in Report
 
-1. **Template library restricted to Zhang proteins:** The template index only contains
-   co-occurring domain pairs from Zhang benchmark proteins (because we search against the
-   Zhang sub-DB). A true cross-organism Rosetta Stone would use templates from all 129M+
-   TED pairs across all of AFDB, dramatically expanding coverage and removing circularity.
-   This is a computational scope limitation, not a conceptual flaw in the algorithm.
+### Limitation 1: Coverage ceiling at 595/3,000 (19.8%) — most important
 
-2. **Circularity in Phase 1 evaluation:** The template index is derived from the same
-   Zhang proteins used for evaluation. This means almost any benchmark protein pair finds
-   a bridge, making the score non-discriminative. Phase 2 partially mitigates this by
-   searching all domains, but the fundamental fix is a cross-organism template index.
+**The observed fact:** Despite processing all 16,855 canonical UniProt accessions in the
+Zhang benchmark, only 595 of the 3,000 positive pairs are covered.
 
-3. **Proteins absent from TED entirely:** Proteins with no AlphaFold2 structure in TED
-   cannot be covered by any domain-based method. This is a hard ceiling.
+**The chain of dependencies that causes this:**
 
-4. **Single structural signal:** No co-expression, co-localisation, or evolutionary
-   co-variation signals are used. Real PPI prediction systems combine multiple signals.
+A positive pair (P1, P2) is only "covered" if BOTH proteins have a non-empty search file.
+A protein only gets a search file if it appears in `ted_pairlist_filters.db` (the SQLite DB).
+That SQLite DB was built from the TED pair list — which only contains proteins with at least
+two co-occurring intra-protein domains (i.e., multi-domain proteins).
+
+Therefore:
+- Single-domain proteins → not in pair list → not in SQLite → not searched → no cache file
+- Proteins with no AlphaFold model → not in TED at all → not in SQLite → not searched
+
+Of the 16,855 canonical proteins processed by Phase 2:
+- ~5,990 had entries in SQLite → got searched → have cache files → in the universe
+- ~10,865 had no SQLite entries → skipped → outside the universe
+
+The 3,000 positive pairs from STRING/BioGRID include many signalling proteins, kinases, and
+receptors that are individually single-domain. Any positive pair where even ONE protein is
+single-domain cannot be covered.
+
+**Why this cannot be fixed with current infrastructure:**
+To cover single-domain proteins, we would need a full TED domain index covering every
+AlphaFold protein (not just those in the pair list). Building this index requires scanning
+all of TED — a separate large computation beyond the scope of this project.
+
+**What to write in the report:**
+> Coverage is limited to 19.8% of Zhang benchmark positive pairs (595/3,000). This ceiling
+> arises because the domain metadata database (`ted_pairlist_filters.db`) only indexes
+> multi-domain proteins that appear in the TED intra-protein domain pair list. Single-domain
+> proteins — which constitute a substantial fraction of the Zhang benchmark — have no entry
+> in this database and therefore cannot be searched or scored. Extending coverage to
+> single-domain proteins would require constructing a complete AlphaFold domain index,
+> which is beyond the computational scope of this project.
+
+---
+
+### Limitation 2: Template library restricted to Zhang proteins (circularity)
+
+The template index only contains co-occurring domain pairs where at least one domain belongs
+to a Zhang benchmark protein (because we searched against the Zhang sub-DB). This means:
+- Templates and evaluation proteins are drawn from the same set → circularity
+- Phase 1 AUCPR was below baseline because almost every pair found a bridge (template index
+  too densely connected to the evaluation universe)
+- Phase 2 resolved this partially: searching ALL domains per protein made the scoring
+  selective enough to achieve 11.64× baseline despite the same template index
+
+A true cross-organism Rosetta Stone would build the template index from all 129M TED pairs
+from all of AFDB, not restricted to Zhang proteins. This would eliminate circularity entirely.
+
+---
+
+### Limitation 3: Single structural signal only
+
+No co-expression, co-localisation, subcellular co-occurrence, or evolutionary co-variation
+signals are used. Real PPI prediction systems (e.g., RF2-PPI from the Zhang paper) combine
+structural, sequence coevolution, and interaction database evidence. Our method is purely
+structural-homology-based.
+
+---
+
+### Limitation 4: Proteins with no AlphaFold model
+
+Proteins with no AlphaFold2 predicted structure cannot be covered by any domain-based method.
+This is a hard ceiling shared by all structure-based PPI prediction approaches.
 
 ---
 
