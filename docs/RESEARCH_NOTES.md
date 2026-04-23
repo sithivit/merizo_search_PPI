@@ -188,6 +188,9 @@ Phase 1 results (min_bridge_tm=0.3):  AUCPR 0.0097 (0.98× baseline), ROC-AUC 0.
 Phase 1 results (min_bridge_tm=0.5):  AUCPR 0.0096 (0.97× baseline), ROC-AUC 0.6043, pos_hit=226/595, neg_hit=575/2975
 Phase 1 results (min_bridge_tm=0.7):  AUCPR 0.0089 (0.90× baseline), ROC-AUC 0.5540, pos_hit=87/595, neg_hit=116/2975
 Phase 2 results (multi-domain, min_bridge_tm=0.0):  AUCPR 0.1153 (11.64× baseline), ROC-AUC 0.6983, pos_hit=517/595, neg_hit=2349/2975
+Phase 2 results (multi-domain, min_bridge_tm=0.3):  AUCPR 0.1153 (11.64× baseline), ROC-AUC 0.7000, pos_hit=507/595, neg_hit=2193/2975
+Phase 2 results (multi-domain, min_bridge_tm=0.5):  AUCPR 0.1153 (11.64× baseline), ROC-AUC 0.7032, pos_hit=310/595, neg_hit=476/2975
+Phase 2 results (multi-domain, min_bridge_tm=0.7):  AUCPR 0.1139 (11.50× baseline), ROC-AUC 0.6447, pos_hit=184/595, neg_hit=74/2975
 
 ---
 
@@ -363,6 +366,7 @@ of AFDB. Documented under Limitations.
 | Non-canonical accession filter | Done |
 | Phase 2 search (all domains, both sides) | Partially complete (5,990/16,855 proteins, job may still run) |
 | Phase 2 benchmark | **Done — AUCPR 11.64× baseline, ROC-AUC 0.6983** |
+| Phase 2 threshold sweep (0.0/0.3/0.5/0.7) | Done — AUCPR stable at 11.64× for TM≤0.5, ROC-AUC peaks at 0.7032 (TM=0.5) |
 | Figures (Phase 2 only, for report) | Done — pr_curve.png, roc_curve.png in figures/ |
 | Report sections updated | Not done yet |
 
@@ -491,6 +495,52 @@ Kept:
 - **Phase 2 (all domains, both sides) is needed for meaningful results.**
 - ROC-AUC 0.60 at TM=0.5 confirms the method IS discriminative — just not enough data
   in Phase 1 to drive AUCPR above baseline.
+
+---
+
+### 2026-04-23 — Phase 2 Threshold Sweep
+
+**Command:**
+
+    for tm in 0.0 0.3 0.5 0.7; do
+        python scripts/benchmark_rosetta_stone.py \
+            --multi-domain \
+            --search-cache-dir benchmark_cache/rosetta_searches \
+            --min-bridge-tm $tm \
+            --output-dir benchmark_results_rosetta_phase2_tm${tm}
+    done
+
+**Results:**
+
+| min_bridge_tm | pos hit          | neg hit           | selectivity ratio | AUCPR  | ×baseline | ROC-AUC    |
+|---------------|-----------------|------------------|-------------------|--------|-----------|------------|
+| 0.0           | 517/595 (86.9%) | 2349/2975 (79.0%) | 1.1×             | 0.1153 | 11.64×    | 0.6983     |
+| 0.3           | 507/595 (85.2%) | 2193/2975 (73.7%) | 1.16×            | 0.1153 | 11.64×    | 0.7000     |
+| 0.5           | 310/595 (52.1%) | 476/2975 (16.0%)  | 3.25×            | 0.1153 | 11.64×    | **0.7032** |
+| 0.7           | 184/595 (30.9%) | 74/2975 (2.5%)    | 12.4×            | 0.1139 | 11.50×    | 0.6447     |
+
+**Interpretation:**
+
+1. **AUCPR is completely stable across TM = 0.0, 0.3, 0.5 (all 11.64×).** The top-ranked
+   pairs — the ones that drive the PR curve area — all have bridges with TM ≥ 0.5 anyway.
+   Weak bridges only appear in lower-ranked pairs where the curve is already near baseline.
+   Removing them changes nothing in the integral.
+
+2. **AUCPR drops only at TM = 0.7 (11.50×).** At this point, 411/595 positives score 0
+   (no bridge strong enough on both sides). These zeroed-out positives hurt the tail of the
+   curve.
+
+3. **ROC-AUC is maximised at TM = 0.5 (0.7032).** At this threshold, only well-supported
+   pairs score non-zero, and noise from weak spurious bridges is eliminated. The selectivity
+   ratio jumps to 3.25× — a pair scoring non-zero at TM=0.5 is 3.25× more likely to be a
+   true positive than a random pair.
+
+4. **TM = 0.5 is the best operating point.** Maximises ROC-AUC, maintains peak AUCPR,
+   and gives a clean selectivity ratio. This is the threshold recommended for practical use
+   (the default in `predict_ppi.py` is already `--min-bridge-tm 0.5`).
+
+5. **The method is robust.** AUCPR does not change across the 0.0–0.5 range — strong
+   evidence the signal is genuine and not an artefact of threshold choice.
 
 ---
 
