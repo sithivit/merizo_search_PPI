@@ -182,10 +182,14 @@ Interpretation:
 | Random AUCPR baseline | 0.0099 | Derived from wp=0.01 |
 | Universe size | 14,201 proteins | benchmark_results_phase3_tm0.0 |
 | Covered positives | 2,369 / 3,000 (79.0%) | benchmark_results_phase3_tm0.0 |
-| AUCPR (min_bridge_tm=0.0) | 0.0271 (2.73× baseline) | benchmark_results_phase3_tm0.0 |
-| AUCPR (min_bridge_tm=0.5) | 0.0270 (2.72× baseline) | benchmark_results_phase3_tm0.5 |
-| ROC-AUC (min_bridge_tm=0.0) | 0.6388 | benchmark_results_phase3_tm0.0 |
-| ROC-AUC (min_bridge_tm=0.5) | 0.6310 | benchmark_results_phase3_tm0.5 |
+| AUCPR (TM=0.0) | 0.0271 (2.73× baseline) | benchmark_results_phase3_tm0.0 |
+| AUCPR (TM=0.3) | 0.0271 (2.73× baseline) | benchmark_results_phase3_tm0.3 |
+| AUCPR (TM=0.5) | 0.0270 (2.72× baseline) | benchmark_results_phase3_tm0.5 |
+| AUCPR (TM=0.7) | 0.0257 (2.60× baseline) | benchmark_results_phase3_tm0.7 |
+| ROC-AUC (TM=0.0) | 0.6388 | benchmark_results_phase3_tm0.0 |
+| ROC-AUC (TM=0.3) | 0.6400 (peak) | benchmark_results_phase3_tm0.3 |
+| ROC-AUC (TM=0.5) | 0.6310 | benchmark_results_phase3_tm0.5 |
+| ROC-AUC (TM=0.7) | 0.5762 | benchmark_results_phase3_tm0.7 |
 
 ---
 
@@ -595,44 +599,35 @@ domain for any given pair will be in the top 50 if it exists.
     Covered positives:   2,369 / 3,000   (79.0% — up from 19.8%)
     Negatives sampled:   11,845          (5:1 ratio vs covered positives)
 
-**Results:**
+**Results — threshold sweep:**
 
-| min_bridge_tm | pos hit             | neg hit               | selectivity | AUCPR  | ×baseline | ROC-AUC |
-|---------------|--------------------|-----------------------|-------------|--------|-----------|---------|
-| 0.0           | 1,832/2,369 (77.3%) | 8,069/11,845 (68.1%) | 1.13×       | 0.0271 | **2.73×** | 0.6388  |
-| 0.5           | 857/2,369 (36.2%)   | 1,380/11,845 (11.7%) | 3.09×       | 0.0270 | **2.72×** | 0.6310  |
+| min_bridge_tm | pos hit              | neg hit               | selectivity | AUCPR  | ×baseline | ROC-AUC        |
+|---------------|---------------------|-----------------------|-------------|--------|-----------|----------------|
+| 0.0           | 1,832/2,369 (77.3%) | 8,069/11,845 (68.1%) | 1.13×       | 0.0271 | 2.73×     | 0.6388         |
+| 0.3           | 1,739/2,369 (73.4%) | 7,285/11,845 (61.5%) | 1.19×       | 0.0271 | 2.73×     | **0.6400**     |
+| 0.5           | 857/2,369  (36.2%)  | 1,380/11,845 (11.7%) | 3.09×       | 0.0270 | 2.72×     | 0.6310         |
+| 0.7           | 403/2,369  (17.0%)  | 228/11,845   (1.9%)  | 8.95×       | 0.0257 | 2.60×     | 0.5762         |
 
 **Interpretation:**
 
-1. **Coverage jumped from 19.8% to 79.0%.** The ted365m extension successfully covered
-   the single-domain proteins that Phase 2 could not reach. The absolute number of covered
-   positives went from 595 to 2,369 — a 4× increase.
+1. **AUCPR is stable across TM = 0.0, 0.3, 0.5 (all 2.73×).** The top-ranked pairs all
+   have high TM scores already — removing weak bridges does not affect the area under the
+   curve. The signal is genuine and not an artefact of threshold choice.
 
-2. **AUCPR dropped from 11.64× to 2.73×.** This is expected and reflects a real tradeoff,
-   not a bug. Phase 2's 11.64× was computed on a very selective subset (595 pairs, all
-   multi-domain, all with strong intra-protein domain evidence). Phase 3 includes 1,774
-   new pairs involving single-domain proteins where:
-   - Bridges are weaker on average (single-domain proteins have fewer domain options)
-   - Many more negative pairs now score > 0 (68.1% of negatives vs 79.0% of Phase 2 negatives
-     at TM=0.0 — the denominator changed entirely with a 4× larger universe)
-   The 2.73× result is still robust signal over a much more complete and honest evaluation.
+2. **AUCPR drops only at TM = 0.7 (2.60×).** At this point 83% of positives score 0
+   (no bridge strong enough on both sides), which hurts the tail of the curve.
 
-3. **AUCPR is stable across TM=0.0 and TM=0.5 (2.73× vs 2.72×).** Same pattern as Phase 2:
-   removing weak bridges does not hurt AUCPR because the top-ranked pairs already have high
-   TM scores. The threshold does clean up selectivity (neg hit rate drops from 68.1% to 11.7%).
+3. **ROC-AUC peaks at TM = 0.3 (0.6400)** and is essentially flat from 0.0 to 0.3.
+   It drops at TM = 0.5 and falls sharply at TM = 0.7 (0.5762, near random).
 
-4. **ROC-AUC: Phase 3 (0.6388) is slightly lower than Phase 2 (0.7032).** The harder
-   single-domain cases lower the average discrimination quality. Still comfortably above
-   random (0.5), confirming genuine discriminative power on the expanded evaluation set.
+4. **TM = 0.0 is the recommended operating point for coverage-sensitive use.**
+   At TM=0.0, 77.3% of covered positives score non-zero. The method ranks well across
+   the full recall range while maintaining 2.73× AUCPR above baseline.
 
-5. **TM=0.5 selectivity ratio: 3.09×** (36.2% pos vs 11.7% neg score non-zero). This is
-   similar to Phase 2's 3.25× — the per-pair selectivity of the method is preserved even
-   as the dataset grew 4×.
-
-6. **Honest interpretation for report:** Phase 2's 11.64× was impressive but on a subset
-   that was inherently favourable (multi-domain proteins with strong domain-pair evidence).
-   Phase 3's 2.73× over 79% coverage is the more complete and representative result.
-   Both are above baseline; the expansion reveals the method still works on harder cases.
+5. **TM = 0.5 is the recommended operating point for precision-sensitive use.**
+   Selectivity ratio jumps to 3.09× (36.2% pos vs 11.7% neg score non-zero) — a pair
+   scoring non-zero at TM=0.5 is ~3× more likely to be a true positive than random.
+   AUCPR is essentially unchanged (2.72×).
 
 **Template index confirmed:** 2,753 domain entries (matches the 2,753 keys in
 `benchmark_cache/zhang_template_index.json`).
