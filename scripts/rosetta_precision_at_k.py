@@ -30,8 +30,52 @@ def precision_at_k(rows_sorted, k):
     return sum(1 for _, is_pos in top if is_pos) / k
 
 
+def load_rows_with_proteins(path):
+    rows = []
+    with open(path) as fh:
+        reader = csv.DictReader(fh, delimiter="\t")
+        for row in reader:
+            rows.append((row["protein_a"], row["protein_b"],
+                         float(row["score"]), row["label"] == "positive"))
+    return rows
+
+
+def per_query_hits_at_1(rows_with_proteins):
+    """For each protein that has ≥1 positive pair, check if its top-scored pair is positive."""
+    from collections import defaultdict
+    protein_pairs = defaultdict(list)
+    for pa, pb, score, is_pos in rows_with_proteins:
+        protein_pairs[pa].append((score, is_pos))
+        protein_pairs[pb].append((score, is_pos))
+
+    rng = random.Random(42)
+    hit = 0
+    miss = 0
+    no_positive = 0
+    top1_examples = []
+
+    for protein, pairs in sorted(protein_pairs.items()):
+        has_positive = any(is_pos for _, is_pos in pairs)
+        if not has_positive:
+            no_positive += 1
+            continue
+        rng.shuffle(pairs)
+        pairs_sorted = sorted(pairs, key=lambda x: x[0], reverse=True)
+        top_score, top_is_pos = pairs_sorted[0]
+        if top_is_pos:
+            hit += 1
+        else:
+            miss += 1
+        if len(top1_examples) < 5:
+            top1_examples.append((protein, top_score, top_is_pos))
+
+    return hit, miss, no_positive, top1_examples
+
+
 def run(args):
-    rows = load_rows(args.pair_scores)
+    rows_full = load_rows_with_proteins(args.pair_scores)
+    rows = [(s, is_pos) for _, _, s, is_pos in rows_full]
+
     n_pos = sum(1 for _, is_pos in rows if is_pos)
     n_neg = sum(1 for _, is_pos in rows if not is_pos)
     total = len(rows)
@@ -51,12 +95,12 @@ def run(args):
     print(f"  Prior (random P@k)    : {prior:.4f}  ({prior*100:.2f}%)")
     print()
 
-    # ── Metric 1: Precision at top-k ────────────────────────────────────
-    print("Precision at top-k (raw, unweighted)")
+    # ── Metric 1: Global Precision at top-k ─────────────────────────────
+    print("Global Precision at top-k (raw, unweighted)")
     print("-" * 60)
     print(f"{'k':>8}  {'TP in top-k':>12}  {'Precision':>10}  {'vs random':>10}")
     print(f"{'':>8}  {'':>12}  {'':>10}  {'(lift)':>10}")
-    ks = [k for k in [50, 100, 200, 500, 1000] if k <= total]
+    ks = [k for k in [1, 50, 100, 200, 500, 1000] if k <= total]
     for k in ks:
         tp = sum(1 for _, is_pos in rows_sorted[:k] if is_pos)
         prec = tp / k
@@ -64,7 +108,22 @@ def run(args):
         print(f"{k:>8,}  {tp:>12,}  {prec:>10.4f}  {lift:>10.2f}×")
     print()
 
-    # ── Metric 2: Precision among non-zero-scoring pairs ────────────────
+    # ── Metric 2: Per-query Hits@1 ───────────────────────────────────────
+    hit, miss, no_positive, examples = per_query_hits_at_1(rows_full)
+    n_queries = hit + miss
+    hits_at_1 = hit / n_queries if n_queries > 0 else 0.0
+
+    print("Per-query Hits@1")
+    print("(For each protein with ≥1 positive pair: is its top-scored partner correct?)")
+    print("-" * 60)
+    print(f"  Query proteins with ≥1 positive pair : {n_queries:,}")
+    print(f"  Proteins with no positive pair        : {no_positive:,}  (excluded)")
+    print(f"  Hits (top-1 = true positive)          : {hit:,}")
+    print(f"  Misses (top-1 = false positive)       : {miss:,}")
+    print(f"  Hits@1                                : {hits_at_1:.4f}  ({hits_at_1*100:.2f}%)")
+    print()
+
+    # ── Metric 3: Precision among non-zero-scoring pairs ────────────────
     nonzero = [(s, is_pos) for s, is_pos in rows if s > 0.0]
     nz_total = len(nonzero)
     nz_pos = sum(1 for _, is_pos in nonzero if is_pos)
