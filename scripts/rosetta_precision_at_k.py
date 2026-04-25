@@ -51,8 +51,9 @@ def per_query_hits_at_1(rows_with_proteins):
     rng = random.Random(42)
     hit = 0
     miss = 0
+    miss_unreachable = 0  # miss because all positives score 0
+    miss_outranked = 0    # miss because a negative genuinely scored higher
     no_positive = 0
-    top1_examples = []
 
     for protein, pairs in sorted(protein_pairs.items()):
         has_positive = any(is_pos for _, is_pos in pairs)
@@ -65,11 +66,15 @@ def per_query_hits_at_1(rows_with_proteins):
         if top_is_pos:
             hit += 1
         else:
+            # Distinguish: can the method see any positive pair at all?
+            best_positive_score = max(s for s, is_pos in pairs if is_pos)
+            if best_positive_score == 0.0:
+                miss_unreachable += 1  # positive is structurally invisible
+            else:
+                miss_outranked += 1    # positive exists but a negative ranked higher
             miss += 1
-        if len(top1_examples) < 5:
-            top1_examples.append((protein, top_score, top_is_pos))
 
-    return hit, miss, no_positive, top1_examples
+    return hit, miss, miss_unreachable, miss_outranked, no_positive
 
 
 def run(args):
@@ -109,9 +114,12 @@ def run(args):
     print()
 
     # ── Metric 2: Per-query Hits@1 ───────────────────────────────────────
-    hit, miss, no_positive, examples = per_query_hits_at_1(rows_full)
+    hit, miss, miss_unreachable, miss_outranked, no_positive = per_query_hits_at_1(rows_full)
     n_queries = hit + miss
     hits_at_1 = hit / n_queries if n_queries > 0 else 0.0
+    # Restricted: exclude proteins whose positive partners are all structurally unreachable
+    n_reachable = hit + miss_outranked
+    hits_at_1_reachable = hit / n_reachable if n_reachable > 0 else 0.0
 
     print("Per-query Hits@1")
     print("(For each protein with ≥1 positive pair: is its top-scored partner correct?)")
@@ -119,8 +127,12 @@ def run(args):
     print(f"  Query proteins with ≥1 positive pair : {n_queries:,}")
     print(f"  Proteins with no positive pair        : {no_positive:,}  (excluded)")
     print(f"  Hits (top-1 = true positive)          : {hit:,}")
-    print(f"  Misses (top-1 = false positive)       : {miss:,}")
-    print(f"  Hits@1                                : {hits_at_1:.4f}  ({hits_at_1*100:.2f}%)")
+    print(f"  Misses                                : {miss:,}")
+    print(f"    — positive unreachable (score=0)    : {miss_unreachable:,}  (method cannot help)")
+    print(f"    — positive outranked by negative    : {miss_outranked:,}  (genuine errors)")
+    print(f"  Hits@1 (all queries)                  : {hits_at_1:.4f}  ({hits_at_1*100:.2f}%)")
+    print(f"  Hits@1 (reachable queries only)       : {hits_at_1_reachable:.4f}  ({hits_at_1_reachable*100:.2f}%)")
+    print(f"  — reachable = positive partner has structural evidence (score > 0)")
     print()
 
     # ── Metric 3: Precision among non-zero-scoring pairs ────────────────
