@@ -63,19 +63,51 @@ def parse_search_tsv(tsv_path: str, query_protein: str) -> dict:
 
 
 def load_hits(pid: str, cache_dir: str) -> dict:
+    """
+    Load and aggregate all search hits for a protein.
+    Supports both single-file ({pid}_search.tsv) and multi-domain
+    ({pid}_domNN_search.tsv) cache formats, taking max TM per template domain.
+    """
+    best = {}
+
+    # Multi-domain format: {pid}_domNN_search.tsv
+    prefix = pid + "_dom"
+    found_any = False
+    for fname in sorted(os.listdir(cache_dir)):
+        if not fname.startswith(prefix) or not fname.endswith("_search.tsv"):
+            continue
+        path = os.path.join(cache_dir, fname)
+        if os.path.getsize(path) == 0:
+            continue
+        found_any = True
+        for tmpl, tm in parse_search_tsv(path, pid).items():
+            if tmpl not in best or tm > best[tmpl]:
+                best[tmpl] = tm
+
+    if found_any:
+        return best
+
+    # Single-file format: {pid}_search.tsv
     tsv = os.path.join(cache_dir, f"{pid}_search.tsv")
-    if not os.path.exists(tsv) or os.path.getsize(tsv) == 0:
-        return {}
-    return parse_search_tsv(tsv, pid)
+    if os.path.exists(tsv) and os.path.getsize(tsv) > 0:
+        return parse_search_tsv(tsv, pid)
+
+    return {}
 
 
 def find_bridges(H1: dict, H2: dict, template_index: dict,
-                 min_bridge_tm: float = 0.0) -> list:
+                 min_bridge_tm: float = 0.0,
+                 self_filter_tm: float = None) -> list:
     """
     Return all (tm_a, domain_a, domain_b, tm_b, score, direction) tuples,
     sorted by score descending.
     direction = "forward" means A in H[P1], B in H[P2].
+
+    Self-interaction filter: a bridge (A, B) is discarded if P1 already
+    carries both an A-like AND a B-like domain, or if P2 does.
+    self_filter_tm defaults to min_bridge_tm when None.
     """
+    sft = min_bridge_tm if self_filter_tm is None else self_filter_tm
     bridges = []
     seen = set()
 
@@ -88,12 +120,19 @@ def find_bridges(H1: dict, H2: dict, template_index: dict,
             continue
         for dom_b in partners:
             tm_b = H2.get(dom_b)
-            if tm_b is not None and tm_b >= min_bridge_tm:
-                key = (dom_a, dom_b)
-                if key not in seen:
-                    seen.add(key)
-                    bridges.append((tm_a, dom_a, dom_b, tm_b,
-                                    min(tm_a, tm_b), "forward"))
+            if tm_b is None or tm_b < min_bridge_tm:
+                continue
+            # Self-interaction filter: P1 already has both A-like and B-like
+            if H1.get(dom_b, -1.0) >= sft:
+                continue
+            # Self-interaction filter: P2 already has both A-like and B-like
+            if H2.get(dom_a, -1.0) >= sft:
+                continue
+            key = (dom_a, dom_b)
+            if key not in seen:
+                seen.add(key)
+                bridges.append((tm_a, dom_a, dom_b, tm_b,
+                                min(tm_a, tm_b), "forward"))
 
     # Reverse: B in H1, A in H2
     for dom_b, tm_b in H1.items():
@@ -104,19 +143,27 @@ def find_bridges(H1: dict, H2: dict, template_index: dict,
             continue
         for dom_a in partners:
             tm_a = H2.get(dom_a)
-            if tm_a is not None and tm_a >= min_bridge_tm:
-                key = (dom_b, dom_a)
-                if key not in seen:
-                    seen.add(key)
-                    bridges.append((tm_b, dom_b, dom_a, tm_a,
-                                    min(tm_b, tm_a), "reverse"))
+            if tm_a is None or tm_a < min_bridge_tm:
+                continue
+            # Self-interaction filter: P1 already has both B-like and A-like
+            if H1.get(dom_a, -1.0) >= sft:
+                continue
+            # Self-interaction filter: P2 already has both A-like and B-like
+            if H2.get(dom_b, -1.0) >= sft:
+                continue
+            key = (dom_b, dom_a)
+            if key not in seen:
+                seen.add(key)
+                bridges.append((tm_b, dom_b, dom_a, tm_a,
+                                min(tm_b, tm_a), "reverse"))
 
     bridges.sort(key=lambda x: x[4], reverse=True)
     return bridges
 
 
 def explain_pair(p1: str, p2: str, cache_dir: str, template_index: dict,
-                 min_bridge_tm: float, top_hits: int, top_bridges: int):
+                 min_bridge_tm: float, self_filter_tm: float,
+                 top_hits: int, top_bridges: int):
     H1 = load_hits(p1, cache_dir)
     H2 = load_hits(p2, cache_dir)
 
@@ -142,13 +189,17 @@ def explain_pair(p1: str, p2: str, cache_dir: str, template_index: dict,
         in_idx = "✓ in template index" if dom in template_index else "  (not in index)"
         print(f"  TM={tm:.4f}  {dom}  {in_idx}")
 
-    print(f"\n--- Step 2: Bridge search (min_bridge_tm={min_bridge_tm}) ---")
+    _sft = min_bridge_tm if self_filter_tm is None else self_filter_tm
+    print(f"\n--- Step 2: Bridge search (min_bridge_tm={min_bridge_tm}, "
+          f"self_filter_tm={_sft}) ---")
     print("Looking for template pairs (A, B) where:")
     print("  A ∈ hits(P1)  AND  B ∈ hits(P2)   [or vice versa]")
     print("  Both TM scores ≥", min_bridge_tm)
+    print("  P1 does NOT already carry both A-like and B-like domains")
+    print("  P2 does NOT already carry both A-like and B-like domains")
     print("  Evidence: A and B co-occur in a TED fusion protein\n")
 
-    bridges = find_bridges(H1, H2, template_index, min_bridge_tm)
+    bridges = find_bridges(H1, H2, template_index, min_bridge_tm, self_filter_tm)
 
     if not bridges:
         print("  No bridges found — score = 0.0")
@@ -174,13 +225,22 @@ def explain_pair(p1: str, p2: str, cache_dir: str, template_index: dict,
 
 
 def find_examples(controls: str, cache_dir: str, template_index: dict,
-                  min_bridge_tm: float, n: int = 10):
+                  min_bridge_tm: float, self_filter_tm: float = None,
+                  n: int = 10):
     """Score all covered positives and show the top-scoring ones."""
     proteins_in_cache = set()
     for fname in os.listdir(cache_dir):
-        if fname.endswith("_search.tsv") and os.path.getsize(
-                os.path.join(cache_dir, fname)) > 0:
-            proteins_in_cache.add(fname[:-len("_search.tsv")])
+        if not fname.endswith("_search.tsv"):
+            continue
+        if os.path.getsize(os.path.join(cache_dir, fname)) == 0:
+            continue
+        stem = fname[:-len("_search.tsv")]
+        # Multi-domain: {pid}_domNN  →  extract pid
+        if "_dom" in stem:
+            pid = stem.rsplit("_dom", 1)[0]
+        else:
+            pid = stem
+        proteins_in_cache.add(pid)
 
     results = []
     with open(controls) as fh:
@@ -197,7 +257,8 @@ def find_examples(controls: str, cache_dir: str, template_index: dict,
                 continue
             H1 = load_hits(p1, cache_dir)
             H2 = load_hits(p2, cache_dir)
-            bridges = find_bridges(H1, H2, template_index, min_bridge_tm)
+            bridges = find_bridges(H1, H2, template_index,
+                                   min_bridge_tm, self_filter_tm)
             score = bridges[0][4] if bridges else 0.0
             results.append((score, p1, p2, len(bridges)))
 
@@ -229,6 +290,11 @@ def main():
                    dest="template_index")
     p.add_argument("--min-bridge-tm", type=float, default=0.0,
                    dest="min_bridge_tm")
+    p.add_argument("--self-filter-tm", type=float, default=None,
+                   dest="self_filter_tm",
+                   help="TM threshold for self-interaction filter (default: same as "
+                        "--min-bridge-tm). Bridges where P1 or P2 already carries both "
+                        "domain types are discarded.")
     p.add_argument("--top-hits", type=int, default=10, dest="top_hits",
                    help="Number of top search hits to display per protein")
     p.add_argument("--top-bridges", type=int, default=10, dest="top_bridges",
@@ -240,10 +306,10 @@ def main():
 
     if args.find_examples:
         find_examples(args.controls, args.search_cache_dir,
-                      template_index, args.min_bridge_tm)
+                      template_index, args.min_bridge_tm, args.self_filter_tm)
     elif args.p1 and args.p2:
         explain_pair(args.p1, args.p2, args.search_cache_dir,
-                     template_index, args.min_bridge_tm,
+                     template_index, args.min_bridge_tm, args.self_filter_tm,
                      args.top_hits, args.top_bridges)
     else:
         p.print_help()

@@ -76,3 +76,57 @@ def test_score_missing_protein_returns_zero():
     template_index = {"domA": ["domB"], "domB": ["domA"]}
     score = score_pair_rosetta("P1", "MISSING", domain_hits, template_index)
     assert score == 0.0
+
+
+# --- Self-interaction filter tests ---
+
+def test_self_filter_p1_has_both_domains():
+    """P1 already carries both A-like and B-like domains: bridge is trivially
+    explained by P1's intrachain contact and must be rejected."""
+    from benchmark_rosetta_stone import score_pair_rosetta
+    domain_hits = {
+        "P1": {"domA": 0.9, "domB": 0.8},  # P1 has both sides of the bridge
+        "P2": {"domB": 0.8},
+    }
+    template_index = {"domA": ["domB"], "domB": ["domA"]}
+    score = score_pair_rosetta("P1", "P2", domain_hits, template_index)
+    assert score == 0.0
+
+
+def test_self_filter_p2_has_both_domains():
+    """P2 already carries both A-like and B-like domains: bridge rejected."""
+    from benchmark_rosetta_stone import score_pair_rosetta
+    domain_hits = {
+        "P1": {"domA": 0.9},
+        "P2": {"domA": 0.7, "domB": 0.8},  # P2 has both sides of the bridge
+    }
+    template_index = {"domA": ["domB"], "domB": ["domA"]}
+    score = score_pair_rosetta("P1", "P2", domain_hits, template_index)
+    assert score == 0.0
+
+
+def test_self_filter_valid_when_domains_split():
+    """Valid Rosetta Stone: P1 has only A-like, P2 has only B-like.
+    The bridge is genuinely interchain and must survive the filter."""
+    from benchmark_rosetta_stone import score_pair_rosetta
+    domain_hits = {
+        "P1": {"domA": 0.9},
+        "P2": {"domB": 0.8},
+    }
+    template_index = {"domA": ["domB"], "domB": ["domA"]}
+    score = score_pair_rosetta("P1", "P2", domain_hits, template_index)
+    assert abs(score - 0.8) < 1e-6  # min(0.9, 0.8) = 0.8
+
+
+def test_self_filter_threshold_respected():
+    """With self_filter_tm=0.5, a weak B hit in P1 (TM=0.3) should NOT
+    trigger the filter — the bridge remains valid."""
+    from benchmark_rosetta_stone import score_pair_rosetta
+    domain_hits = {
+        "P1": {"domA": 0.9, "domB": 0.3},  # domB present but below self_filter_tm
+        "P2": {"domB": 0.8},
+    }
+    template_index = {"domA": ["domB"], "domB": ["domA"]}
+    score = score_pair_rosetta("P1", "P2", domain_hits, template_index,
+                               min_bridge_tm=0.0, self_filter_tm=0.5)
+    assert abs(score - 0.8) < 1e-6  # bridge valid: P1's domB hit is below 0.5

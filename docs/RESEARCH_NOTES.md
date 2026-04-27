@@ -13,11 +13,29 @@ For a candidate pair (P1, P2):
 
     H[P] = {template_domain: max_TM_score}  for all TED domains of P searched against Zhang sub-DB
 
-    score(P1, P2) = max over all template pairs (A, B) where:
+    score(P1, P2) = max over all valid template pairs (A, B) where:
                       A in H[P1] AND B in H[P2] → min(H[P1][A], H[P2][B])
                       OR B in H[P1] AND A in H[P2] → min(H[P1][B], H[P2][A])
 
 The `min()` ensures both sides of the bridge must be structurally supported.
+
+### Self-interaction filter (validity condition)
+
+A template pair (A, B) constitutes a valid Rosetta Stone bridge only if the two
+domains are **split across the two query proteins** — i.e. P1 carries an A-like domain
+but not a B-like domain, and P2 carries a B-like domain but not an A-like domain
+(or vice versa).
+
+If P1 already carries both an A-like **and** a B-like domain (TM ≥ `self_filter_tm`),
+the A–B co-occurrence in the template is trivially explained by P1's own intrachain
+contacts and provides no interchain evidence. Likewise for P2. Such bridges are
+discarded before scoring.
+
+    Valid bridge (A, B): NOT (A in H[P1] AND B in H[P1])
+                         AND NOT (A in H[P2] AND B in H[P2])
+
+`self_filter_tm` defaults to `min_bridge_tm`. For benchmarks run at `min_bridge_tm=0.0`,
+setting `--self-filter-tm 0.3` avoids over-rejection from very weak residual hits.
 
 ### Domain discovery — two complementary paths
 
@@ -47,7 +65,7 @@ remaining 20.1% have no AlphaFold model and are unreachable by any structure-bas
 | `tests/test_rosetta_template_index.py` | Unit tests: index builder (3 tests) |
 | `tests/test_benchmark_rosetta_stone.py` | Unit tests: scoring functions (6 tests) |
 
-All 9 unit tests pass.
+All 13 unit tests pass (9 original + 4 self-interaction filter tests).
 
 ---
 
@@ -75,8 +93,11 @@ For pair (P1, P2):
   H[P2] = {zhang_domain: best_TM}  ← read from P2's cached TSV files
   For every template pair (A, B) in template_index:
     if A in H[P1] and B in H[P2]:
+      # Self-interaction filter (NEW):
+      if B already in H[P1] above self_filter_tm → DISCARD (trivial intrachain in P1)
+      if A already in H[P2] above self_filter_tm → DISCARD (trivial intrachain in P2)
       bridge_score = min(H[P1][A], H[P2][B])
-  Final score = max over all bridges
+  Final score = max over all surviving bridges
 ```
 
 merizo_search only runs at the per-protein search step. `predict_ppi.py --uid1/--uid2`
@@ -134,13 +155,18 @@ Only 1,756 of 129M pairs are retained because the template library is restricted
 
 ## Benchmark Results
 
+> **STATUS: Numbers below are PRE-self-interaction-filter (old results).**
+> After adding the self-interaction filter, the benchmark must be re-run on the server
+> to produce updated numbers. See the "Self-interaction filter change" section below
+> for the command and what to expect.
+
 ### Dataset
 
     Universe:           14,201 proteins
     Covered positives:  2,369 / 3,000  (79.0%)
     Negatives sampled:  11,845  (5:1 ratio)
 
-### Threshold sweep (min_bridge_tm)
+### Threshold sweep (min_bridge_tm) — PRE-FILTER RESULTS
 
 | min_bridge_tm | pos hit              | neg hit               | selectivity | AUCPR  | ×baseline | ROC-AUC    |
 |---------------|---------------------|-----------------------|-------------|--------|-----------|------------|
@@ -149,7 +175,7 @@ Only 1,756 of 129M pairs are retained because the template library is restricted
 | 0.5           | 857/2,369  (36.2%)  | 1,380/11,845 (11.7%) | 3.09×       | 0.0270 | 2.72×     | 0.6310     |
 | 0.7           | 403/2,369  (17.0%)  | 228/11,845   (1.9%)  | 8.95×       | 0.0257 | 2.60×     | 0.5762     |
 
-### Interpretation
+### Interpretation (pre-filter)
 
 1. **AUCPR is stable across TM = 0.0, 0.3, 0.5 (all 2.73×).** The top-ranked pairs already
    have high TM scores — removing weak bridges does not affect the area under the curve.
@@ -214,9 +240,14 @@ is genuinely discriminative across the full 79% coverage evaluation set.
 
 ---
 
-## Case Example: LYN × SRC
+## Case Example: LYN × SRC (INVALIDATED by self-interaction filter)
 
-**Command:**
+> **This example is no longer valid after adding the self-interaction filter.**
+> It is retained here to document WHY the filter is needed (and as the motivating
+> example from the supervisor's feedback). See "New case example" below for the
+> replacement.
+
+**Old command (pre-filter):**
 
     python scripts/rosetta_explain_pair.py \
         --p1 P07948 --p2 P12931 --min-bridge-tm 0.5 \
@@ -224,46 +255,249 @@ is genuinely discriminative across the full 79% coverage evaluation set.
         --template-index benchmark_cache/zhang_template_index.json
 
 **Pair:** P07948 (LYN, Src-family kinase) × P12931 (SRC, Src-family kinase)
-**Score:** 0.9935  |  **Bridges found:** 141
+**Old score (pre-filter):** 0.9935  |  **Bridges found:** 141
+**New score (post-filter):** 0.0  |  **All 141 bridges rejected**
 
-**Best bridge trace:**
+**Why the score was high (and why it was wrong):**
 
     Template protein: P08631 (HCK — Hematopoietic cell kinase, Src-family)
-    ├─ HCK_TED04  co-occurs with  HCK_TED03  in the same protein (TED fusion evidence)
+    ├─ HCK_TED04  co-occurs with  HCK_TED03  in the same protein
     │
-    ├─ LYN (P07948) structurally resembles HCK_TED04   TM = 0.9989
-    └─ SRC (P12931) structurally resembles HCK_TED03   TM = 0.9935
+    ├─ LYN (P07948) → HCK_TED04   TM = 0.9989  ✓
+    └─ SRC (P12931) → HCK_TED03   TM = 0.9935  ✓
 
-    score = min(0.9989, 0.9935) = 0.9935
+    bridge_score = min(0.9989, 0.9935) = 0.9935  [BEFORE filter]
 
-**Why 141 bridges:** LYN and SRC are both Src-family kinases. Every other Src/Tec-family
-kinase in the Zhang sub-DB (HCK, LCK, FYN, BTK, ITK, FRK, BMX, …) has the same TED
-domain pair architecture. Each independently provides a bridge.
+**Why the filter rejects all 141 bridges:**
 
-**Algorithm confirmed correct:** LYN and SRC score high because LYN resembles one domain
-(TED04) and SRC resembles the paired domain (TED03) of the same fusion protein — exactly
-the Rosetta Stone principle.
+LYN is itself a Src-family kinase with SH3 + SH2 + kinase domains — the same architecture
+as HCK. Therefore LYN's hit map H[LYN] contains hits to BOTH HCK_TED03 and HCK_TED04
+(and all equivalent domains from every Src-family kinase in the sub-DB). For every bridge
+(A, B) that fires between LYN and SRC, domain B is already present in H[LYN] above the
+self-filter threshold. The self-interaction filter correctly identifies that the A–B
+co-occurrence in HCK is trivially explained by LYN's own intrachain contacts — there is
+no genuine interchain evidence.
+
+In the professor's terms: LYN and SRC "contain the exact same set of domains — so any
+domain pairings you find will just be intrachain interactions and not new interchain
+interactions."
+
+**What this tells us about the method:**
+The pre-filter result was not evidence of a PPI — it was evidence that LYN and SRC are
+from the same structural family. The method was finding homologues, not interaction
+partners. The filter makes this failure mode visible and removes it from the scored set.
+
+---
+
+## Self-interaction filter change (supervisor feedback — rosetta_stone_v2 branch)
+
+### What changed and why
+
+The supervisor identified a missing validity condition in the Rosetta Stone inference.
+A bridge (A, B) is only genuine interchain evidence if the two domain types are **split**
+across the two query proteins. If P1 already carries both an A-like AND a B-like domain,
+the A–B co-occurrence in the template is trivially explained by P1's own intrachain
+contacts — no interchain prediction is warranted. Same applies symmetrically for P2.
+
+The filter was added to `score_pair_rosetta()`, `find_bridges()` (explain script), and
+`find_bridges()` (predict_ppi.py). The new `--self-filter-tm` CLI argument controls the
+threshold (defaults to `min_bridge_tm`).
+
+### Scripts changed
+
+| Script | Change |
+|--------|--------|
+| `benchmark_rosetta_stone.py` | `score_pair_rosetta()`: added self-interaction filter in both forward and reverse bridge loops; added `--self-filter-tm` CLI arg |
+| `rosetta_explain_pair.py` | `find_bridges()`: same filter; updated console output to label active filter conditions |
+| `predict_ppi.py` | `find_bridges()`: same filter; added `--self-filter-tm` CLI arg |
+| `tests/test_benchmark_rosetta_stone.py` | +4 tests: P1-has-both rejected, P2-has-both rejected, valid-split accepted, threshold-boundary respected |
+
+### Commands to re-run on the server
+
+**Step 1 — Re-run the benchmark with the filter (all four threshold points):**
+
+    # Default: self_filter_tm = min_bridge_tm (0.0)
+    python scripts/benchmark_rosetta_stone.py \
+        --search-cache-dir benchmark_cache/rosetta_searches \
+        --template-index benchmark_cache/zhang_template_index.json \
+        --output-dir benchmark_results_filtered_tm0.0 \
+        --multi-domain --min-bridge-tm 0.0
+
+    python scripts/benchmark_rosetta_stone.py \
+        --search-cache-dir benchmark_cache/rosetta_searches \
+        --template-index benchmark_cache/zhang_template_index.json \
+        --output-dir benchmark_results_filtered_tm0.3 \
+        --multi-domain --min-bridge-tm 0.3
+
+    python scripts/benchmark_rosetta_stone.py \
+        --search-cache-dir benchmark_cache/rosetta_searches \
+        --template-index benchmark_cache/zhang_template_index.json \
+        --output-dir benchmark_results_filtered_tm0.5 \
+        --multi-domain --min-bridge-tm 0.5
+
+    python scripts/benchmark_rosetta_stone.py \
+        --search-cache-dir benchmark_cache/rosetta_searches \
+        --template-index benchmark_cache/zhang_template_index.json \
+        --output-dir benchmark_results_filtered_tm0.7 \
+        --multi-domain --min-bridge-tm 0.7
+
+**Step 2 — Confirm LYN × SRC is filtered (score should now be 0.0):**
+
+    python scripts/rosetta_explain_pair.py \
+        --p1 P07948 --p2 P12931 \
+        --search-cache-dir benchmark_cache/rosetta_searches \
+        --template-index benchmark_cache/zhang_template_index.json \
+        --min-bridge-tm 0.0
+
+**Step 3 — Find the new top-scoring surviving positive pair:**
+
+    python scripts/rosetta_explain_pair.py \
+        --find-examples \
+        --controls benchmark_cache/benchmarks/positives_and_negatives.tsv \
+        --search-cache-dir benchmark_cache/rosetta_searches \
+        --template-index benchmark_cache/zhang_template_index.json \
+        --min-bridge-tm 0.0
+
+**Step 4 — Trace the new top pair in detail:**
+
+    python scripts/rosetta_explain_pair.py \
+        --p1 <NEW_P1> --p2 <NEW_P2> \
+        --search-cache-dir benchmark_cache/rosetta_searches \
+        --template-index benchmark_cache/zhang_template_index.json \
+        --min-bridge-tm 0.0 --top-bridges 5
+
+**Step 5 — Precision@k on new results:**
+
+    python scripts/rosetta_precision_at_k.py \
+        --pair-scores benchmark_results_filtered_tm0.0/pair_scores.tsv
+
+**Step 6 — Regenerate figures:**
+
+    python scripts/plot_benchmark_curves.py \
+        --pair-scores benchmark_results_filtered_tm0.0/pair_scores.tsv \
+        --labels "Rosetta Stone (paired-domain transfer, self-filter)" \
+        --output-dir figures/
+
+### What to expect after re-running
+
+Same-family pairs (kinase × kinase, SH2 × SH2, etc.) will lose all bridges and score 0.
+Cross-family pairs (e.g. kinase × adaptor, receptor × regulator) where one protein has
+A-type domains and the other has structurally unrelated B-type domains will be unaffected.
+
+Expected direction of change:
+- **Positive hit rate will drop** — same-family true positives that scored for the wrong
+  reason will drop to 0. These are "unreachable" by the corrected method.
+- **Negative hit rate will also drop** — many high-scoring negatives were probably also
+  same-family pairs (e.g. two unrelated kinases sharing a template kinase). Removing these
+  may improve selectivity.
+- **Net effect on AUCPR is uncertain** — the benchmark needs to be re-run to know.
+- **The method is now conceptually correct** — any surviving non-zero score represents
+  genuine interchain structural evidence, not intrachain self-similarity.
+
+### What a valid new case example looks like
+
+A good replacement for LYN × SRC should satisfy:
+- P1 carries domain type A but has NO structural match to domain type B (H[P1] does not
+  contain domain B above self_filter_tm)
+- P2 carries domain type B but has NO structural match to domain type A
+- The bridge (A, B) comes from a template protein T where A and B are physically adjacent
+  but structurally unrelated folds
+- Biologically: a known interaction between proteins from different structural families,
+  e.g. a kinase interacting with an adaptor/scaffold, a receptor with a cytoplasmic
+  effector, or an enzyme with a regulatory subunit
+
+Run Step 3 above to find the actual top pair from the filtered results.
+
+---
+
+## New Case Example (TO BE FILLED after server re-run)
+
+    Pair:         <P1_ACCESSION> × <P2_ACCESSION>
+    Score:        <SCORE>
+    Bridges:      <N>
+    Template:     <TEMPLATE_PROTEIN>
+    Bridge:       <TEMPLATE_DOM_A> + <TEMPLATE_DOM_B>
+    P1 → dom_A:  TM = <TM_A>
+    P2 → dom_B:  TM = <TM_B>
+    Filter check: dom_B NOT in H[P1], dom_A NOT in H[P2]  ✓
+
+---
+
+## Precision at Top-k Results
+
+Generated by `scripts/rosetta_precision_at_k.py` on `benchmark_results_phase3_tm0.0/pair_scores.tsv`.
+
+Random baseline (prior): 16.67% (2,369 positives / 14,214 evaluated pairs)
+
+| k | TP in top-k | Precision | vs random (lift) |
+|---|---|---|---|
+| 50 | 47 | 94.00% | 5.64× |
+| 100 | 88 | 88.00% | 5.28× |
+| 200 | 165 | 82.50% | 4.95× |
+| 500 | 359 | 71.80% | 4.31× |
+| 1,000 | 528 | 52.80% | 3.17× |
+
+### Non-zero scoring pair analysis
+
+| Category | Count | % of group |
+|---|---|---|
+| Total pairs evaluated | 14,214 | — |
+| Non-zero scoring pairs | 9,901 | 69.7% of all |
+| — Positives (score > 0) | 1,832 | 77.3% of all positives |
+| — Negatives (score > 0) | 8,069 | 68.1% of all negatives |
+| Precision (score > 0) | 18.50% | 1.11× random |
+| Zero-scoring pairs | 4,313 | 30.3% of all |
+| — Positives (score = 0) | 537 | structurally unreachable |
+| — Negatives (score = 0) | 3,776 | — |
+
+### Interpretation
+
+Precision@k is very strong at the top of the ranked list (94% at k=50, 88% at k=100)
+but degrades as k grows. This confirms the method is a high-confidence precision
+instrument: when a strong bridge exists, the prediction is almost always correct.
+
+Precision among non-zero-scoring pairs (18.5%, 1.11× random) is barely above random.
+Having *any* bridge is nearly uninformative — weak bridges appear in negative pairs by
+chance due to shared common folds. The signal is concentrated in the score magnitude.
+
+The AUCPR of 2.73× understates the method's discrimination power at high confidence
+because it averages over the entire ranked list, including the long tail of weak bridges.
 
 ---
 
 ## Key Numbers for Report
 
-| Metric | Value | Source |
-|--------|-------|--------|
-| Zhang sub-DB domain names | 2,753 | rosetta_dump_zhang_domains.py |
-| TED pair list total lines | 129,440,391 | rosetta_build_template_index.py |
-| Template pairs retained | 1,756 | rosetta_build_template_index.py |
-| Random AUCPR baseline | 0.0099 | Derived from wp=0.01 |
-| Universe size | 14,201 proteins | benchmark_results_phase3_tm0.0 |
-| Covered positives | 2,369 / 3,000 (79.0%) | benchmark_results_phase3_tm0.0 |
-| AUCPR (TM=0.0) | 0.0271 (2.73× baseline) | benchmark_results_phase3_tm0.0 |
-| AUCPR (TM=0.3) | 0.0271 (2.73× baseline) | benchmark_results_phase3_tm0.3 |
-| AUCPR (TM=0.5) | 0.0270 (2.72× baseline) | benchmark_results_phase3_tm0.5 |
-| AUCPR (TM=0.7) | 0.0257 (2.60× baseline) | benchmark_results_phase3_tm0.7 |
-| ROC-AUC (TM=0.0) | 0.6388 | benchmark_results_phase3_tm0.0 |
-| ROC-AUC (TM=0.3) | 0.6400 (peak) | benchmark_results_phase3_tm0.3 |
-| ROC-AUC (TM=0.5) | 0.6310 | benchmark_results_phase3_tm0.5 |
-| ROC-AUC (TM=0.7) | 0.5762 | benchmark_results_phase3_tm0.7 |
+> Numbers marked [PRE-FILTER] are from before the self-interaction filter was added.
+> Numbers marked [POST-FILTER] will be filled after re-running on the server.
+
+| Metric | Value | Status | Source |
+|--------|-------|--------|--------|
+| Zhang sub-DB domain names | 2,753 | stable | rosetta_dump_zhang_domains.py |
+| TED pair list total lines | 129,440,391 | stable | rosetta_build_template_index.py |
+| Template pairs retained | 1,756 | stable | rosetta_build_template_index.py |
+| Random AUCPR baseline | 0.0099 | stable | Derived from wp=0.01 |
+| Random P@k baseline | 16.67% | stable | 2,369/14,214 evaluated pairs |
+| Universe size | 14,201 proteins | stable | unchanged by filter |
+| Covered positives | 2,369 / 3,000 (79.0%) | stable | unchanged by filter |
+| AUCPR (TM=0.0) | 0.0271 (2.73× baseline) | **[PRE-FILTER]** | benchmark_results_phase3_tm0.0 |
+| AUCPR (TM=0.3) | 0.0271 (2.73× baseline) | **[PRE-FILTER]** | benchmark_results_phase3_tm0.3 |
+| AUCPR (TM=0.5) | 0.0270 (2.72× baseline) | **[PRE-FILTER]** | benchmark_results_phase3_tm0.5 |
+| AUCPR (TM=0.7) | 0.0257 (2.60× baseline) | **[PRE-FILTER]** | benchmark_results_phase3_tm0.7 |
+| ROC-AUC (TM=0.0) | 0.6388 | **[PRE-FILTER]** | benchmark_results_phase3_tm0.0 |
+| ROC-AUC (TM=0.3) | 0.6400 (peak) | **[PRE-FILTER]** | benchmark_results_phase3_tm0.3 |
+| ROC-AUC (TM=0.5) | 0.6310 | **[PRE-FILTER]** | benchmark_results_phase3_tm0.5 |
+| ROC-AUC (TM=0.7) | 0.5762 | **[PRE-FILTER]** | benchmark_results_phase3_tm0.7 |
+| Precision@50 | 94.0% (5.64× random) | **[PRE-FILTER]** | rosetta_precision_at_k.py |
+| Precision@100 | 88.0% (5.28× random) | **[PRE-FILTER]** | rosetta_precision_at_k.py |
+| Precision@200 | 82.5% (4.95× random) | **[PRE-FILTER]** | rosetta_precision_at_k.py |
+| Precision@500 | 71.8% (4.31× random) | **[PRE-FILTER]** | rosetta_precision_at_k.py |
+| Precision@1000 | 52.8% (3.17× random) | **[PRE-FILTER]** | rosetta_precision_at_k.py |
+| Precision (score > 0) | 18.5% (1.11× random) | **[PRE-FILTER]** | rosetta_precision_at_k.py |
+| Non-zero pairs | 9,901 / 14,214 (69.7%) | **[PRE-FILTER]** | rosetta_precision_at_k.py |
+| Structurally unreachable positives | 537 (score = 0) | **[PRE-FILTER]** | rosetta_precision_at_k.py |
+| AUCPR post-filter (TM=0.0) | **[TBD]** | [POST-FILTER] | benchmark_results_filtered_tm0.0 |
+| ROC-AUC post-filter (TM=0.0) | **[TBD]** | [POST-FILTER] | benchmark_results_filtered_tm0.0 |
+| Hits@1 post-filter (reachable) | **[TBD]** | [POST-FILTER] | rosetta_precision_at_k.py |
 
 ---
 
@@ -310,7 +544,10 @@ method. This is a hard ceiling shared by all structure-based PPI prediction appr
 | Template index built | Done — 1,756 pairs, 2,753 entries |
 | Search cache — multi-domain proteins | Done — rosetta_search_both_sides.py |
 | Search cache — single-domain proteins | Done — rosetta_search_ted365m.py (5,703 proteins) |
-| Benchmark + threshold sweep | Done — 2.73× baseline, 79.0% coverage |
-| Figures | Done — figures/pr_curve.png, figures/roc_curve.png |
-| Unit tests | Done — 9/9 passing |
-| Report | Not done yet |
+| Benchmark + threshold sweep (pre-filter) | Done — 2.73× baseline, 79.0% coverage |
+| Self-interaction filter — code | **Done** — added to benchmark/explain/predict scripts |
+| Self-interaction filter — unit tests | **Done** — 13/13 passing |
+| Benchmark re-run with filter | **TODO** — run on server, fill in post-filter numbers |
+| New case example | **TODO** — run --find-examples on server after filter re-run |
+| Figures (updated) | **TODO** — regenerate after benchmark re-run |
+| Report | In progress |

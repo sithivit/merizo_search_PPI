@@ -173,7 +173,8 @@ def load_template_index(path: str) -> dict:
 def score_pair_rosetta(p1: str, p2: str,
                        domain_hits: dict,
                        template_index: dict,
-                       min_bridge_tm: float = 0.0) -> float:
+                       min_bridge_tm: float = 0.0,
+                       self_filter_tm: float = None) -> float:
     """
     Rosetta Stone score for a candidate protein pair.
 
@@ -181,11 +182,19 @@ def score_pair_rosetta(p1: str, p2: str,
     P1 has an A-like domain and P2 has a B-like domain (or vice versa).
     Returns min(tm_A, tm_B) for the best bridge, 0.0 if none exists.
     Only bridges where both TM scores >= min_bridge_tm are considered.
+
+    Self-interaction filter: a bridge (A, B) is discarded if P1 already
+    carries both an A-like AND a B-like domain (TM >= self_filter_tm), or
+    if P2 does. Such bridges are trivially explained by intrachain contacts
+    and do not constitute genuine interchain Rosetta Stone evidence.
+    self_filter_tm defaults to min_bridge_tm when None.
     """
     H1 = domain_hits.get(p1, {})
     H2 = domain_hits.get(p2, {})
     if not H1 or not H2:
         return 0.0
+
+    sft = min_bridge_tm if self_filter_tm is None else self_filter_tm
 
     best = 0.0
     # Forward: A in H1, B in H2
@@ -197,10 +206,17 @@ def score_pair_rosetta(p1: str, p2: str,
             continue
         for dom_b in partners:
             tm_b = H2.get(dom_b)
-            if tm_b is not None and tm_b >= min_bridge_tm:
-                score = min(tm_a, tm_b)
-                if score > best:
-                    best = score
+            if tm_b is None or tm_b < min_bridge_tm:
+                continue
+            # Self-interaction filter: P1 already has both A-like and B-like
+            if H1.get(dom_b, -1.0) >= sft:
+                continue
+            # Self-interaction filter: P2 already has both A-like and B-like
+            if H2.get(dom_a, -1.0) >= sft:
+                continue
+            score = min(tm_a, tm_b)
+            if score > best:
+                best = score
     # Reverse: B in H1, A in H2
     for dom_b, tm_b in H1.items():
         if tm_b < min_bridge_tm:
@@ -210,10 +226,17 @@ def score_pair_rosetta(p1: str, p2: str,
             continue
         for dom_a in partners:
             tm_a = H2.get(dom_a)
-            if tm_a is not None and tm_a >= min_bridge_tm:
-                score = min(tm_b, tm_a)
-                if score > best:
-                    best = score
+            if tm_a is None or tm_a < min_bridge_tm:
+                continue
+            # Self-interaction filter: P1 already has both B-like and A-like
+            if H1.get(dom_a, -1.0) >= sft:
+                continue
+            # Self-interaction filter: P2 already has both A-like and B-like
+            if H2.get(dom_b, -1.0) >= sft:
+                continue
+            score = min(tm_b, tm_a)
+            if score > best:
+                best = score
     return best
 
 
@@ -345,10 +368,12 @@ def write_summary(positives, negatives, pos_scores, neg_scores,
             w(f"  Precision @ R=0.5:  {precision_at_recall(precs, recs, 0.5):.4f}")
         w()
         w("--- Parameters ---")
-        w(f"  multi_domain:    {args.multi_domain}")
-        w(f"  min_bridge_tm:   {args.min_bridge_tm}")
-        w(f"  wp:              {args.wp}")
-        w(f"  neg_ratio:       {args.neg_ratio}")
+        w(f"  multi_domain:      {args.multi_domain}")
+        w(f"  min_bridge_tm:     {args.min_bridge_tm}")
+        w(f"  self_filter_tm:    {args.self_filter_tm} "
+          f"(None = same as min_bridge_tm)")
+        w(f"  wp:                {args.wp}")
+        w(f"  neg_ratio:         {args.neg_ratio}")
 
 
 # ---------------------------------------------------------------------------
@@ -384,12 +409,13 @@ def run(args):
     template_index = load_template_index(args.template_index)
     log.info(f"Template index: {len(template_index):,} domain entries")
 
-    log.info(f"Scoring pairs (min_bridge_tm={args.min_bridge_tm})...")
+    log.info(f"Scoring pairs (min_bridge_tm={args.min_bridge_tm}, "
+             f"self_filter_tm={args.self_filter_tm})...")
     pos_scores = [score_pair_rosetta(a, b, domain_hits, template_index,
-                                     args.min_bridge_tm)
+                                     args.min_bridge_tm, args.self_filter_tm)
                   for a, b in positives]
     neg_scores = [score_pair_rosetta(a, b, domain_hits, template_index,
-                                     args.min_bridge_tm)
+                                     args.min_bridge_tm, args.self_filter_tm)
                   for a, b in negatives]
 
     n_pos_hit = sum(1 for s in pos_scores if s > 0)
@@ -429,6 +455,11 @@ def parse_args():
     p.add_argument("--min-bridge-tm", type=float, default=0.0,
                    dest="min_bridge_tm",
                    help="Minimum TM score required on both bridge sides (e.g. 0.5)")
+    p.add_argument("--self-filter-tm", type=float, default=None,
+                   dest="self_filter_tm",
+                   help="TM threshold for self-interaction filter: discard bridge (A,B) "
+                        "if P1 already has TM>=threshold to both A and B, or P2 does. "
+                        "Defaults to min_bridge_tm when not set.")
     p.add_argument("--neg-ratio", type=int, default=5, dest="neg_ratio")
     p.add_argument("--wp", type=float, default=0.01)
     return p.parse_args()

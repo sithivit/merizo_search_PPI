@@ -104,7 +104,14 @@ def load_from_cache(uid: str, cache_dir: str) -> dict:
 # ---------------------------------------------------------------------------
 
 def find_bridges(H1: dict, H2: dict, template_index: dict,
-                 min_bridge_tm: float) -> list:
+                 min_bridge_tm: float,
+                 self_filter_tm: float = None) -> list:
+    """
+    Self-interaction filter: discard bridge (A, B) if P1 already carries
+    both an A-like AND a B-like domain, or if P2 does.
+    self_filter_tm defaults to min_bridge_tm when None.
+    """
+    sft = min_bridge_tm if self_filter_tm is None else self_filter_tm
     bridges = []
     seen = set()
 
@@ -113,22 +120,36 @@ def find_bridges(H1: dict, H2: dict, template_index: dict,
             continue
         for dom_b in (template_index.get(dom_a) or []):
             tm_b = H2.get(dom_b)
-            if tm_b is not None and tm_b >= min_bridge_tm:
-                key = (dom_a, dom_b)
-                if key not in seen:
-                    seen.add(key)
-                    bridges.append((tm_a, dom_a, dom_b, tm_b, min(tm_a, tm_b)))
+            if tm_b is None or tm_b < min_bridge_tm:
+                continue
+            # Self-interaction filter: P1 already has both A-like and B-like
+            if H1.get(dom_b, -1.0) >= sft:
+                continue
+            # Self-interaction filter: P2 already has both A-like and B-like
+            if H2.get(dom_a, -1.0) >= sft:
+                continue
+            key = (dom_a, dom_b)
+            if key not in seen:
+                seen.add(key)
+                bridges.append((tm_a, dom_a, dom_b, tm_b, min(tm_a, tm_b)))
 
     for dom_b, tm_b in H1.items():
         if tm_b < min_bridge_tm:
             continue
         for dom_a in (template_index.get(dom_b) or []):
             tm_a = H2.get(dom_a)
-            if tm_a is not None and tm_a >= min_bridge_tm:
-                key = (dom_b, dom_a)
-                if key not in seen:
-                    seen.add(key)
-                    bridges.append((tm_b, dom_b, dom_a, tm_a, min(tm_b, tm_a)))
+            if tm_a is None or tm_a < min_bridge_tm:
+                continue
+            # Self-interaction filter: P1 already has both B-like and A-like
+            if H1.get(dom_a, -1.0) >= sft:
+                continue
+            # Self-interaction filter: P2 already has both A-like and B-like
+            if H2.get(dom_b, -1.0) >= sft:
+                continue
+            key = (dom_b, dom_a)
+            if key not in seen:
+                seen.add(key)
+                bridges.append((tm_b, dom_b, dom_a, tm_a, min(tm_b, tm_a)))
 
     bridges.sort(key=lambda x: x[4], reverse=True)
     return bridges
@@ -229,6 +250,11 @@ def main():
     p.add_argument("--min-bridge-tm", type=float, default=0.5,
                    dest="min_bridge_tm",
                    help="Minimum TM score required on both bridge sides (default 0.5)")
+    p.add_argument("--self-filter-tm", type=float, default=None,
+                   dest="self_filter_tm",
+                   help="TM threshold for self-interaction filter (default: same as "
+                        "--min-bridge-tm). Bridges where P1 or P2 already carries both "
+                        "domain types are discarded.")
     p.add_argument("--topk", type=int, default=50,
                    help="Top-k hits to retrieve from merizo search")
     p.add_argument("--batchsize", type=int, default=2097152)
@@ -272,8 +298,11 @@ def main():
         print(f"  {len(H2)} template domain hits.")
 
     # Score
-    print(f"\nFinding bridges (min_bridge_tm={args.min_bridge_tm})...")
-    bridges = find_bridges(H1, H2, template_index, args.min_bridge_tm)
+    _sft = args.min_bridge_tm if args.self_filter_tm is None else args.self_filter_tm
+    print(f"\nFinding bridges (min_bridge_tm={args.min_bridge_tm}, "
+          f"self_filter_tm={_sft})...")
+    bridges = find_bridges(H1, H2, template_index,
+                           args.min_bridge_tm, args.self_filter_tm)
 
     # Report
     print_report(name1, name2, H1, H2, bridges, args.min_bridge_tm, args.top_bridges)
