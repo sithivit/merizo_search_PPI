@@ -59,4 +59,5 @@ def create_pairlist_json(original_json_path: str, indices: List[int], output_jso
     print(f"  Filtered DB size: {len(indices)}")
 
 if __name__ == "__main__":
-    pass
+    print("This module is a library. Use transform_pairlist_to_database.py to run the full pipeline.")
+    import sys; sys.exit(0)

@@ -137,58 +137,50 @@ def find_index_by_name(target_name, dbinfo, db_dir):
 
 
 def main():
-    if len(sys.argv) < 3:
-        print(__doc__)
-        sys.exit(1)
+    import argparse
+    parser = argparse.ArgumentParser(
+        description="Extract domain(s) from the TED365M database as CA-only PDB files.",
+    )
+    parser.add_argument("db_json", help="Path to Foldclass database JSON config (e.g. ted_pairlist.json)")
+    subparsers = parser.add_subparsers(dest="mode", required=True)
 
-    db_json_path = sys.argv[1]
-    dbinfo = read_dbinfo(db_json_path)
-    db_dir = os.path.dirname(os.path.abspath(db_json_path))
+    single = subparsers.add_parser("single", help="Extract one domain by name")
+    single.add_argument("domain_name", help="TED domain identifier (e.g. AF-P12345-F1-model_v4_TED01)")
+    single.add_argument("output", help="Output PDB file path")
 
-    if sys.argv[2] == '--batch':
-        # ------ batch mode: extract first N from pairlist ------
-        if len(sys.argv) < 5:
-            print("Usage: extract_domain_pdb.py <db_json> --batch <N> <output_dir>")
-            sys.exit(1)
+    batch = subparsers.add_parser("batch", help="Extract the first N domains from the pairlist index")
+    batch.add_argument("n", type=int, help="Number of domains to extract")
+    batch.add_argument("output_dir", help="Output directory for extracted PDB files")
 
-        n = int(sys.argv[3])
-        output_dir = sys.argv[4]
-        os.makedirs(output_dir, exist_ok=True)
+    args = parser.parse_args()
 
+    dbinfo = read_dbinfo(args.db_json)
+    db_dir = os.path.dirname(os.path.abspath(args.db_json))
+
+    if args.mode == "batch":
+        os.makedirs(args.output_dir, exist_ok=True)
         if 'INDEX_LIST_FILE' not in dbinfo:
-            print("Error: --batch requires INDEX_LIST_FILE in the database JSON.")
+            print("Error: batch mode requires INDEX_LIST_FILE in the database JSON.")
             sys.exit(1)
-
         index_list_path = os.path.join(db_dir, dbinfo['INDEX_LIST_FILE'])
         with open(index_list_path, 'r') as f:
             all_indices = [int(line.strip()) for line in f]
-
-        print(f"Pairlist has {len(all_indices)} domains. Extracting first {n}...")
-        for i, idx in enumerate(all_indices[:n]):
+        print(f"Pairlist has {len(all_indices)} domains. Extracting first {args.n}...")
+        for i, idx in enumerate(all_indices[:args.n]):
             name, seq, coords = extract_domain(dbinfo, db_dir, idx)
-            out_pdb = os.path.join(output_dir, f"{name}.pdb")
+            out_pdb = os.path.join(args.output_dir, f"{name}.pdb")
             write_ca_pdb(coords, seq, out_pdb)
-            print(f"  [{i+1}/{n}] idx={idx:>12d}  len={len(seq):>4d}  {name}")
-
+            print(f"  [{i+1}/{args.n}] idx={idx:>12d}  len={len(seq):>4d}  {name}")
     else:
-        # ------ single domain by name ------
-        if len(sys.argv) < 4:
-            print("Usage: extract_domain_pdb.py <db_json> <domain_name> <output.pdb>")
-            sys.exit(1)
-
-        target_name = sys.argv[2]
-        output_path = sys.argv[3]
-
-        print(f"Looking up '{target_name}'...")
-        domain_idx = find_index_by_name(target_name, dbinfo, db_dir)
+        print(f"Looking up '{args.domain_name}'...")
+        domain_idx = find_index_by_name(args.domain_name, dbinfo, db_dir)
         if domain_idx is None:
-            print(f"Error: '{target_name}' not found.")
+            print(f"Error: '{args.domain_name}' not found.")
             sys.exit(1)
-
         print(f"  Found at original DB index: {domain_idx}")
         name, seq, coords = extract_domain(dbinfo, db_dir, domain_idx)
-        write_ca_pdb(coords, seq, output_path)
-        print(f"  Wrote {len(seq)}-residue CA-only PDB: {output_path}")
+        write_ca_pdb(coords, seq, args.output)
+        print(f"  Wrote {len(seq)}-residue CA-only PDB: {args.output}")
 
 
 if __name__ == '__main__':

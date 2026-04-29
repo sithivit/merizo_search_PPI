@@ -101,5 +101,5 @@ def map_ids_to_indices(domain_ids: Set[str], db_config_path: str) -> Dict[str, i
     return domain_to_idx
 
 if __name__ == "__main__":
-    # Test stub
-    pass
+    print("This module is a library. Use transform_pairlist_to_database.py to run the full pipeline.")
+    import sys; sys.exit(0)

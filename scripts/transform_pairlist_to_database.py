@@ -95,8 +95,14 @@ def main(pair_list_path, db_config_path, output_dir):
         pass
 
 if __name__ == '__main__':
-    if len(sys.argv) != 4:
-        print(__doc__)
-        sys.exit(1)
-
-    main(sys.argv[1], sys.argv[2], sys.argv[3])
+    import argparse
+    parser = argparse.ArgumentParser(
+        description="Build an indexed Foldclass-compatible database from the TED domain pair list.",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog=__doc__,
+    )
+    parser.add_argument("pair_list", help="Path to TED pair list file (e.g. pair_list_20250128)")
+    parser.add_argument("db_config", help="Path to ted_365M.json Foldclass database config")
+    parser.add_argument("output_dir", help="Output directory for the filtered database")
+    args = parser.parse_args()
+    main(args.pair_list, args.db_config, args.output_dir)

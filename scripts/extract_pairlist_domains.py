@@ -36,10 +36,9 @@ def extract_domain_ids(pair_list_path: str) -> Set[str]:
     return domain_ids
 
 if __name__ == "__main__":
-    if len(sys.argv) < 2:
-        print("Usage: python extract_pairlist_domains.py <pair_list_path>")
-        sys.exit(1)
-    
-    pair_list_path = sys.argv[1]
-    domain_ids = extract_domain_ids(pair_list_path)
+    import argparse
+    parser = argparse.ArgumentParser(description="Extract unique domain IDs from a TED pair list file.")
+    parser.add_argument("pair_list", help="Path to pair_list file (e.g. pair_list_20250128)")
+    args = parser.parse_args()
+    domain_ids = extract_domain_ids(args.pair_list)
     print(f"Unique domains in pair list: {len(domain_ids)}")

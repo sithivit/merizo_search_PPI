@@ -64,8 +64,8 @@ def extract_gz_files(directory):
 
 
 if __name__ == "__main__":
-    # Path to EColi directory
-    ecoli_dir = Path(__file__).parent / "EColi"
-
-    print(f"Starting extraction in: {ecoli_dir}")
-    extract_gz_files(ecoli_dir)
+    import argparse
+    parser = argparse.ArgumentParser(description="Extract all .gz files in a directory.")
+    parser.add_argument("directory", help="Path to directory containing .gz files")
+    args = parser.parse_args()
+    extract_gz_files(args.directory)

@@ -158,8 +158,5 @@ def create_pairlist_filter_db(domain_to_idx: Dict[str, int], db_config_path: str
     print(f"Created filter database: {output_db_path}")
 
 if __name__ == "__main__":
-    if len(sys.argv) < 3:
-        print("Usage: python create_pairlist_filter_db.py <... arguments ...> (This script is intended to be imported)")
-        sys.exit(1)
-    # Stub for direct usage if needed
-    pass
+    print("This module is a library. Use transform_pairlist_to_database.py to run the full pipeline.")
+    sys.exit(0)
