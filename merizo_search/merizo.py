@@ -156,6 +156,19 @@ def search(args):
                         help="If --multi_domain_search is used, specifies the multi-domain search mode. Currently only 'exhaustive_tmalign' is supported.")
                          #Run pairwise TM-align for each query domain and potential hit domain. If all query domains can be aligned (tm> --mintm) to domains in the hit, it is a full-length hit.")
 
+    # Filter arguments
+    parser.add_argument('--filter-db', type=str, default=None,
+                        help='Path to filter database (built with build-filter-index)')
+    parser.add_argument('--filter-taxonomy', type=int, default=None,
+                        help='Filter by taxonomy ID (e.g., 9606 for human)')
+    parser.add_argument('--filter-cath', type=str, default=None,
+                        help='Filter by CATH fold (e.g., 3.40.50.300)')
+    parser.add_argument('--filter-confidence', type=str, default=None,
+                        choices=['high', 'medium'],
+                        help='Filter by confidence level')
+    parser.add_argument('--filter-min-globularity', type=float, default=None,
+                        help='Filter by minimum globularity score')
+
     args = parser.parse_args(args)
     tmp = munge_tmp_with_uuid(args.tmp)
     logging.info('Starting search with command: \n\n{}\n'.format(
@@ -199,7 +212,13 @@ def search(args):
         pdb_chain=args.pdb_chain,
         search_batchsize=args.search_batchsize,
         search_type=args.search_metric,
-        skip_tmalign=False #args.multi_domain_search
+        skip_tmalign=False, #args.multi_domain_search
+        # Pass filter parameters
+        filter_db_path=args.filter_db,
+        filter_taxonomy=args.filter_taxonomy,
+        filter_cath_fold=args.filter_cath,
+        filter_confidence=args.filter_confidence,
+        filter_min_globularity=args.filter_min_globularity
     )
     write_search_results(results=search_results, output_file=search_output, format_list=output_fields, header=args.output_headers, metadata_json=args.metadata_json)
     if args.report_insignificant_hits:
@@ -285,6 +304,19 @@ def easy_search(args):
     parser.add_argument("--conf_threshold", type=float, default=0.5, help="[For iteration mode] Controls the minimum confidence to accept for iteration move.")
     parser.add_argument("--pdb_chain", type=str, dest="pdb_chain", default="A",
                         help="Select which PDB Chain you are analysing. Defaut is chain A. You can provide a comma separated list if you can provide more than one input pdb")
+    
+    # Filter arguments
+    parser.add_argument('--filter-db', type=str, default=None,
+                        help='Path to filter database (built with build-filter-index)')
+    parser.add_argument('--filter-taxonomy', type=int, default=None,
+                        help='Filter by taxonomy ID (e.g., 9606 for human)')
+    parser.add_argument('--filter-cath', type=str, default=None,
+                        help='Filter by CATH fold (e.g., 3.40.50.300)')
+    parser.add_argument('--filter-confidence', type=str, default=None,
+                        choices=['high', 'medium'],
+                        help='Filter by confidence level')
+    parser.add_argument('--filter-min-globularity', type=float, default=None,
+                        help='Filter by minimum globularity score')
 
     args = parser.parse_args(args)
     tmp = munge_tmp_with_uuid(args.tmp)
@@ -385,7 +417,13 @@ def easy_search(args):
         pdb_chain=pdb_chains_for_search,
         search_batchsize=args.search_batchsize,
         search_type=args.search_metric,
-        skip_tmalign=False #args.multi_domain_search
+        skip_tmalign=False, #args.multi_domain_search
+        # Pass filter parameters
+        filter_db_path=args.filter_db,
+        filter_taxonomy=args.filter_taxonomy,
+        filter_cath_fold=args.filter_cath,
+        filter_confidence=args.filter_confidence,
+        filter_min_globularity=args.filter_min_globularity
     )
 
     write_search_results(results=search_results, output_file=search_output, format_list=output_fields, header=args.output_headers, metadata_json=args.metadata_json)
@@ -413,16 +451,62 @@ def easy_search(args):
     shutil.rmtree(tmp)
 
 
+# Function to handle build-filter-index mode
+def build_filter_index(args):
+    """
+    Build SQLite filter index from Merizo database.
+
+    Usage:
+        python merizo.py build-filter-index DATABASE OUTPUT
+
+    Example:
+        python merizo.py build-filter-index \
+            examples/database/ted100_9606_small/ted100_9606_small \
+            examples/database/ted100_9606_small/ted100_9606_small_filters.db
+    """
+    parser = argparse.ArgumentParser(
+        description="Build SQLite filter index from Merizo database for fast filtering.",
+        formatter_class=argparse.ArgumentDefaultsHelpFormatter
+    )
+    parser.add_argument("database", type=str, help="Database name (without .json extension)")
+    parser.add_argument("output", type=str, help="Output SQLite database path")
+
+    args = parser.parse_args(args)
+
+    from programs.Foldclass.metadata_extractor import extract_metadata_from_database
+
+    db_path = args.database + '.json'  # Merizo database config
+    output_path = args.output
+
+    if not os.path.exists(db_path):
+        logging.error(f"Database config not found: {db_path}")
+        sys.exit(1)
+
+    logging.info(f"Building filter index from: {db_path}")
+    logging.info(f"Output: {output_path}")
+
+    start_time = time.time()
+    num_domains = extract_metadata_from_database(db_path, output_path)
+    elapsed_time = time.time() - start_time
+
+    logging.info(f"Filter index built successfully in {elapsed_time:.2f} seconds!")
+    logging.info(f"Indexed {num_domains} domains")
+
+    file_size_mb = os.path.getsize(output_path) / 1024 / 1024
+    logging.info(f"Index size: {file_size_mb:.2f} MB")
+
+
 # Main function to parse arguments and call respective functions
 def main():
     setup_logging()
     usage = """Usage: python merizo.py <mode> <args>
-    <mode> is one of: 'segment', 'createdb', 'search', or 'easy-search'.
+    <mode> is one of: 'segment', 'createdb', 'search', 'easy-search', or 'build-filter-index'.
     Detailed help is available for each mode:
         python merizo.py segment --help
         python merizo.py createdb --help
         python merizo.py search --help
         python merizo.py easy-search --help
+        python merizo.py build-filter-index --help
     """
 
     if len(sys.argv) < 2:
@@ -440,10 +524,12 @@ def main():
         search(args)
     elif mode == "easy-search":
         easy_search(args)
+    elif mode == "build-filter-index":
+        build_filter_index(args)
     elif mode == "-h" or mode == "--help":
         print(usage)
     else:
-        print("Invalid mode. Please choose one of 'segment', 'createdb', 'search', or 'easy-search'.")
+        print("Invalid mode. Please choose one of 'segment', 'createdb', 'search', 'easy-search', or 'build-filter-index'.")
 
 if __name__ == "__main__":
     main()

@@ -214,10 +214,22 @@ def dbsearch_faiss(queries: list[dict], target_dict: dict, tmp: str, network: Fo
                 topk: int, mincov: float, mincos: float, mintm: float, fastmode: bool,
                 device: torch.device, inputs_are_ca: bool=False,
                 search_batchsize:int=262144, search_type='IP', pdb_chain:str="A",
-                skip_tmalign=False, score_corrections=None):
+                skip_tmalign=False, score_corrections=None,
+                # NEW FILTER PARAMETERS
+                filter_db_path: str=None,
+                filter_taxonomy: int=None,
+                filter_cath_fold: str=None,
+                filter_confidence: str=None,
+                filter_min_globularity: float=None):
 
 
     import faiss
+    # Faiss version compatibility: older builds expose these as named constants,
+    # newer builds may not — fall back to their integer values.
+    if not hasattr(faiss, 'METRIC_INNER_PRODUCT'):
+        faiss.METRIC_INNER_PRODUCT = 0
+    if not hasattr(faiss, 'METRIC_L2'):
+        faiss.METRIC_L2 = 1
     # from faiss.contrib.exhaustive_search import knn_ground_truth
 
     def knn_exact_faiss(xq, db_iterator, k, metric_type=faiss.METRIC_INNER_PRODUCT, device=torch.device('cpu')):
@@ -283,7 +295,64 @@ def dbsearch_faiss(queries: list[dict], target_dict: dict, tmp: str, network: Fo
 
     # memory-map the db
     dbmm = db_memmap(filename=dbfname, shape=(dbinfo['DB_SIZE'], dbinfo['DB_DIM']))
-    dbi = db_iterator(dbmm, search_batchsize)
+
+    # NEW: Apply filters if specified
+    index_mapper = None
+
+    # Check for pre-defined index list in database config
+    base_indices = None
+    if 'INDEX_LIST_FILE' in dbinfo:
+        index_list_path = os.path.join(db_dir, dbinfo['INDEX_LIST_FILE'])
+        if os.path.exists(index_list_path):
+             logger.info(f"Loading filtered database index from {dbinfo['INDEX_LIST_FILE']}...")
+             with open(index_list_path, 'r') as f:
+                 base_indices = [int(line.strip()) for line in f]
+             logger.info(f"Restricted search to {len(base_indices)} domains")
+
+    filters_active = filter_db_path and any([filter_taxonomy, filter_cath_fold,
+                                filter_confidence, filter_min_globularity])
+
+    if filters_active or base_indices is not None:
+        from .filter_query import FilterQuery
+        from .filtered_iterator import db_iterator_filtered, FilteredIndexMapper
+
+        filtered_indices = None
+
+        if filters_active:
+            logger.info("Applying pre-filters...")
+            fq = FilterQuery(filter_db_path)
+
+            # Get filtered indices
+            dynamic_indices = fq.filter_combined(
+                taxonomy_id=filter_taxonomy,
+                cath_fold=filter_cath_fold,
+                confidence=filter_confidence,
+                min_globularity=filter_min_globularity
+            )
+            fq.close()
+
+            if base_indices is not None:
+                # Intersect
+                base_set = set(base_indices)
+                filtered_indices = [i for i in dynamic_indices if i in base_set]
+            else:
+                filtered_indices = dynamic_indices
+        else:
+            filtered_indices = base_indices
+
+        logger.info(f"Filter matched {len(filtered_indices)} / {dbinfo['DB_SIZE']} domains")
+        reduction_pct = 100 * (1 - len(filtered_indices) / dbinfo['DB_SIZE'])
+        logger.info(f"Reduction: {reduction_pct:.1f}%")
+
+        # Create filtered iterator
+        dbi = db_iterator_filtered(dbmm, filtered_indices, search_batchsize)
+
+        # Create index mapper for results
+        index_mapper = FilteredIndexMapper(filtered_indices)
+
+    else:
+        # Original behavior - search all domains
+        dbi = db_iterator(dbmm, search_batchsize)
 
     logger.info('DB iterator using batchsize of '+str(search_batchsize))
 
@@ -330,6 +399,10 @@ def dbsearch_faiss(queries: list[dict], target_dict: dict, tmp: str, network: Fo
         device = torch.device('cpu')
 
     D, I = knn_exact_faiss(query_embeddings.cpu(), dbi, topk, metric_type=mt, device=device)
+
+    # NEW: Map filtered indices back to original if needed
+    if index_mapper is not None:
+        I = index_mapper.to_original(I)
 
     if faiss.is_similarity_metric(mt):
         D_mask = np.where(D>=mincos)
@@ -493,7 +566,10 @@ def dbsearch_faiss(queries: list[dict], target_dict: dict, tmp: str, network: Fo
 
 def run_dbsearch(inputs: list[str], db_name: str, tmp: str, device: torch.device, topk: int, fastmode: bool,
                  threads: int, mincos: float, mintm: float, mincov: float, inputs_are_ca: bool=False,
-                 search_batchsize:int=262144, search_type='IP', pdb_chain: str=None, skip_tmalign:bool=False) -> None:
+                 search_batchsize:int=262144, search_type='IP', pdb_chain: str=None, skip_tmalign:bool=False,
+                 # NEW FILTER PARAMETERS
+                 filter_db_path: str=None, filter_taxonomy: int=None, filter_cath_fold: str=None,
+                 filter_confidence: str=None, filter_min_globularity: float=None) -> None:
 
 
     if len(inputs) == 0:
@@ -531,7 +607,13 @@ def run_dbsearch(inputs: list[str], db_name: str, tmp: str, device: torch.device
                               target_dict=target_db,
                               search_batchsize=search_batchsize,
                               search_type=search_type,
-                              skip_tmalign=skip_tmalign
+                              skip_tmalign=skip_tmalign,
+                              # NEW: Pass filter parameters
+                              filter_db_path=filter_db_path,
+                              filter_taxonomy=filter_taxonomy,
+                              filter_cath_fold=filter_cath_fold,
+                              filter_confidence=filter_confidence,
+                              filter_min_globularity=filter_min_globularity
                             )
     else:
         # if pdb_chain:

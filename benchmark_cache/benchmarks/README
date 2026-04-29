@@ -1,0 +1,1 @@
+There are two files in this folder. The file “positives_and_negatives.tsv” contains the positive and negative controls used to benchmark different methods. The file “pairs_partitioned_by_interface_sizes” contains additional positive controls derived from PDB complexes, partitioned into different categories based on interface size, which correlates with binding affinity.
