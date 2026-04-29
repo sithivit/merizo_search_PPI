@@ -1,17 +1,12 @@
 #!/usr/bin/env python3
 """
-rosetta_make_mini_sample.py
-
-Create a small sample controls file (N positive pairs + 5*N negatives) from
-the full Zhang controls, restricted to proteins that already have cached
-search results. Used to validate the Rosetta Stone pipeline before running
-the full benchmark.
+Create a small sample controls file from cached proteins for pipeline validation.
 
 Usage:
-    python scripts/rosetta_make_mini_sample.py \
-        --controls benchmark_cache/benchmarks/positives_and_negatives.tsv \
-        --search-cache benchmark_cache/searches \
-        --n-positives 30 \
+    python scripts/rosetta_make_mini_sample.py \\
+        --controls benchmark_cache/benchmarks/positives_and_negatives.tsv \\
+        --search-cache benchmark_cache/searches \\
+        --n-positives 30 \\
         --output benchmark_cache/benchmarks/mini_controls.tsv
 """
 
@@ -24,7 +19,6 @@ PROJECT_ROOT = os.path.dirname(SCRIPT_DIR)
 
 
 def run(args):
-    # Get proteins with cached search results
     cached = set()
     if os.path.isdir(args.search_cache):
         for fname in os.listdir(args.search_cache):
@@ -34,7 +28,6 @@ def run(args):
                     cached.add(fname[:-len("_search.tsv")])
     print(f"Proteins with cached search results: {len(cached)}")
 
-    # Load positives and negatives
     positives, negatives = [], []
     with open(args.controls) as fh:
         next(fh)

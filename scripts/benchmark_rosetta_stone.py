@@ -1,33 +1,22 @@
 #!/usr/bin/env python3
 """
-benchmark_rosetta_stone.py
-
 Rosetta Stone PPI benchmark: paired-domain homology transfer.
 
-Algorithm
----------
-For each benchmark protein P, all its TED domains are searched against the
-Zhang sub-database. The per-domain hits are aggregated into:
-  H[P] = {template_domain: max_tm_across_all_domains_of_P}
+For each protein P, all TED domain hits are aggregated into H[P]. A pair
+(P1, P2) is scored by the best bridging template (A, B) where A in H[P1]
+and B in H[P2]: score = max over bridges of min(TM_A, TM_B), checked
+bidirectionally with an optional self-interaction filter.
 
-For a candidate pair (P1, P2), we look for the best "bridging" template pair
-(A, B) from the TED pair list such that A in H[P1] and B in H[P2]:
-  score = min(H[P1][A], H[P2][B])
-The final score is the maximum over all valid bridging templates. This is
-checked bidirectionally (A in H[P1] and B in H[P2], OR B in H[P1] and A in H[P2]).
-
-Usage (Phase 1 — existing cache, Domain B only):
+Usage:
     python scripts/benchmark_rosetta_stone.py \\
         --search-cache-dir benchmark_cache/searches \\
         --template-index benchmark_cache/zhang_template_index.json \\
         --output-dir benchmark_results_rosetta_phase1
 
-Usage (Phase 2 — new per-domain cache, all domains both sides):
-    python scripts/benchmark_rosetta_stone.py \\
+    python scripts/benchmark_rosetta_stone.py --multi-domain \\
         --search-cache-dir benchmark_cache/rosetta_searches \\
         --template-index benchmark_cache/zhang_template_index.json \\
-        --output-dir benchmark_results_rosetta_phase2 \\
-        --multi-domain
+        --output-dir benchmark_results_rosetta_phase2
 """
 
 import argparse
@@ -56,10 +45,6 @@ DEFAULT_OUTPUT_DIR = os.path.join(PROJECT_ROOT, "benchmark_results_rosetta")
 COL_TARGET = 2
 COL_MAX_TM = 10
 
-
-# ---------------------------------------------------------------------------
-# Universe and input loading
-# ---------------------------------------------------------------------------
 
 def get_universe(search_cache_dir: str, multi_domain: bool) -> set:
     """Proteins with at least one non-empty search TSV in the cache directory."""
@@ -116,15 +101,7 @@ def parse_search_tsv(tsv_path: str, query_protein: str) -> dict:
 
 def load_search_results_per_domain(proteins: set, search_cache_dir: str,
                                    multi_domain: bool) -> dict:
-    """
-    Returns {(protein, domain_label): {template_domain_name: max_tm}}.
-
-    single-domain mode (multi_domain=False):
-      reads {pid}_search.tsv, label = "dom00"
-
-    multi-domain mode (multi_domain=True):
-      reads {pid}_dom{NN}_search.tsv, label = "domNN"
-    """
+    """Returns {(protein, domain_label): {template_domain: max_tm}}."""
     results = {}
     for pid in sorted(proteins):
         if multi_domain:
@@ -145,12 +122,7 @@ def load_search_results_per_domain(proteins: set, search_cache_dir: str,
 
 
 def build_protein_hit_map(per_domain_hits: dict) -> dict:
-    """
-    Aggregate per-domain hits into per-protein map (max TM per template domain).
-
-    Input:  {(protein, domain_label): {template_domain: tm}}
-    Output: {protein: {template_domain: max_tm_across_all_domains}}
-    """
+    """Aggregate per-domain hits into per-protein map (max TM per template domain)."""
     hit_map = {}
     for (pid, _label), hits in per_domain_hits.items():
         protein_hits = hit_map.setdefault(pid, {})
@@ -161,14 +133,9 @@ def build_protein_hit_map(per_domain_hits: dict) -> dict:
 
 
 def load_template_index(path: str) -> dict:
-    """Load JSON {domain_name: [co-occurring domain names]} template pair index."""
     with open(path) as fh:
         return json.load(fh)
 
-
-# ---------------------------------------------------------------------------
-# Rosetta Stone scoring
-# ---------------------------------------------------------------------------
 
 def score_pair_rosetta(p1: str, p2: str,
                        domain_hits: dict,
@@ -176,18 +143,9 @@ def score_pair_rosetta(p1: str, p2: str,
                        min_bridge_tm: float = 0.0,
                        self_filter_tm: float = None) -> float:
     """
-    Rosetta Stone score for a candidate protein pair.
-
-    Finds the best bridging template pair (A, B) in the TED pair list where
-    P1 has an A-like domain and P2 has a B-like domain (or vice versa).
-    Returns min(tm_A, tm_B) for the best bridge, 0.0 if none exists.
-    Only bridges where both TM scores >= min_bridge_tm are considered.
-
-    Self-interaction filter: a bridge (A, B) is discarded if P1 already
-    carries both an A-like AND a B-like domain (TM >= self_filter_tm), or
-    if P2 does. Such bridges are trivially explained by intrachain contacts
-    and do not constitute genuine interchain Rosetta Stone evidence.
-    self_filter_tm defaults to min_bridge_tm when None.
+    Returns min(tm_A, tm_B) for the best bridging template (A, B), or 0.0.
+    Bridges where P1 or P2 already carries both domain types are discarded
+    (self-interaction filter; self_filter_tm defaults to min_bridge_tm).
     """
     H1 = domain_hits.get(p1, {})
     H2 = domain_hits.get(p2, {})
@@ -197,7 +155,6 @@ def score_pair_rosetta(p1: str, p2: str,
     sft = min_bridge_tm if self_filter_tm is None else self_filter_tm
 
     best = 0.0
-    # Forward: A in H1, B in H2
     for dom_a, tm_a in H1.items():
         if tm_a < min_bridge_tm:
             continue
@@ -208,16 +165,13 @@ def score_pair_rosetta(p1: str, p2: str,
             tm_b = H2.get(dom_b)
             if tm_b is None or tm_b < min_bridge_tm:
                 continue
-            # Self-interaction filter: P1 already has both A-like and B-like
             if H1.get(dom_b, -1.0) >= sft:
                 continue
-            # Self-interaction filter: P2 already has both A-like and B-like
             if H2.get(dom_a, -1.0) >= sft:
                 continue
             score = min(tm_a, tm_b)
             if score > best:
                 best = score
-    # Reverse: B in H1, A in H2
     for dom_b, tm_b in H1.items():
         if tm_b < min_bridge_tm:
             continue
@@ -228,10 +182,8 @@ def score_pair_rosetta(p1: str, p2: str,
             tm_a = H2.get(dom_a)
             if tm_a is None or tm_a < min_bridge_tm:
                 continue
-            # Self-interaction filter: P1 already has both B-like and A-like
             if H1.get(dom_a, -1.0) >= sft:
                 continue
-            # Self-interaction filter: P2 already has both A-like and B-like
             if H2.get(dom_b, -1.0) >= sft:
                 continue
             score = min(tm_b, tm_a)
@@ -239,10 +191,6 @@ def score_pair_rosetta(p1: str, p2: str,
                 best = score
     return best
 
-
-# ---------------------------------------------------------------------------
-# Negative sampling and metrics (same methodology as benchmark_ppi_v2.py)
-# ---------------------------------------------------------------------------
 
 def make_canonical(a, b):
     return (a, b) if a < b else (b, a)
@@ -304,10 +252,6 @@ def compute_roc_auc(pos_scores, neg_scores):
             for p in pos_scores for n in neg_scores)
     return u / (P * N)
 
-
-# ---------------------------------------------------------------------------
-# Output
-# ---------------------------------------------------------------------------
 
 def write_pair_scores(positives, negatives, pos_scores, neg_scores, path):
     with open(path, "w", newline="") as fh:
@@ -375,10 +319,6 @@ def write_summary(positives, negatives, pos_scores, neg_scores,
         w(f"  wp:                {args.wp}")
         w(f"  neg_ratio:         {args.neg_ratio}")
 
-
-# ---------------------------------------------------------------------------
-# Main
-# ---------------------------------------------------------------------------
 
 def run(args):
     os.makedirs(args.output_dir, exist_ok=True)

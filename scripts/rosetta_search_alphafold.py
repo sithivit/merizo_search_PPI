@@ -1,20 +1,8 @@
 #!/usr/bin/env python3
 """
-rosetta_search_alphafold.py
-
-Download AlphaFold PDB structures for benchmark proteins that are missing
-from the Phase 2 search cache (i.e. single-domain proteins absent from the
-TED pairlist SQLite DB), then run merizo search against the Zhang sub-DB.
-
-This extends Phase 2 coverage to single-domain proteins without needing
-the ted_pairlist_filters.db infrastructure.
-
-For each missing protein:
-  1. Download AF-{uid}-F1-model_v4.pdb from the AlphaFold EBI server
-  2. Run merizo search against the Zhang sub-DB
-  3. Save result as: {output_dir}/{uid}_dom00_search.tsv
-     (dom00 suffix keeps it compatible with --multi-domain benchmark mode)
-  4. On 404 or search failure, write empty sentinel to skip on re-runs
+Download AlphaFold PDBs for benchmark proteins missing from the search cache,
+then run merizo search against the Zhang sub-DB. Saves results as
+{output_dir}/{uid}_dom00_search.tsv; writes empty sentinels on 404 or failure.
 
 Usage:
     python scripts/rosetta_search_alphafold.py \\
@@ -87,7 +75,7 @@ def get_universe(search_cache_dir: str) -> set:
 
 
 def has_sentinel(uid: str, search_cache_dir: str) -> bool:
-    """Return True if an empty sentinel already exists for this protein."""
+    """True if an empty sentinel exists (previous failed attempt recorded)."""
     sentinel = os.path.join(search_cache_dir, f"{uid}_dom00_search.tsv")
     return os.path.exists(sentinel) and os.path.getsize(sentinel) == 0
 
@@ -147,7 +135,7 @@ def process_protein(uid: str, search_cache_dir: str, zhang_db: str,
         pdb_path = os.path.join(tmpdir, f"{uid}.pdb")
 
         if not download_alphafold_pdb(uid, pdb_path):
-            open(cache_tsv, "w").close()  # empty sentinel
+            open(cache_tsv, "w").close()
             return uid, "no_alphafold_model"
 
         prefix = os.path.join(tmpdir, uid)
@@ -174,7 +162,6 @@ def run(args):
     log.info(f"Already in universe: {len(universe):,}")
 
     todo = sorted(all_proteins - universe)
-    # Skip proteins that already have an empty sentinel (no AlphaFold model)
     todo = [uid for uid in todo
             if not has_sentinel(uid, args.search_cache_dir)]
     log.info(f"Remaining to process: {len(todo):,}")

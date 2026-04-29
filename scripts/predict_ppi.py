@@ -1,18 +1,6 @@
 #!/usr/bin/env python3
 """
-predict_ppi.py
-
-Predict whether two proteins interact using the Rosetta Stone
-paired-domain transfer method.
-
-Given two protein structures (PDB files), this script:
-  1. Searches each protein against the Zhang sub-database with merizo
-  2. Builds a hit map: {zhang_template_domain: TM_score} for each protein
-  3. Looks for bridging template pairs (A, B) where:
-       - protein_1 resembles domain A  (TM >= min_bridge_tm)
-       - protein_2 resembles domain B  (TM >= min_bridge_tm)
-       - A and B co-occur in the same TED fusion protein
-  4. Score = max over all bridges of min(TM_1→A, TM_2→B)
+Predict whether two proteins interact using Rosetta Stone paired-domain transfer.
 
 Usage:
     python scripts/predict_ppi.py \\
@@ -21,8 +9,6 @@ Usage:
         --zhang-db zhang_pairlist_db/zhang_pairlist_db/ted_pairlist \\
         --template-index benchmark_cache/zhang_template_index.json
 
-    # If you have UniProt IDs and their structures are already in the
-    # benchmark search cache, use --uid1/--uid2 to skip re-searching:
     python scripts/predict_ppi.py \\
         --uid1 P07948 --uid2 P12931 \\
         --search-cache benchmark_cache/searches \\
@@ -45,16 +31,9 @@ COL_TARGET = 2
 COL_MAX_TM = 10
 
 
-# ---------------------------------------------------------------------------
-# Search
-# ---------------------------------------------------------------------------
-
 def run_merizo_search(pdb_path: str, zhang_db: str, topk: int,
                       batchsize: int) -> dict:
-    """
-    Run merizo search for one PDB against the Zhang sub-DB.
-    Returns {target_domain_name: max_tm}.
-    """
+    """Run merizo search for one PDB. Returns {target_domain_name: max_tm}."""
     merizo = os.path.join(PROJECT_ROOT, "merizo_search", "merizo.py")
     with tempfile.TemporaryDirectory(prefix="predict_ppi_") as tmpdir:
         prefix = os.path.join(tmpdir, "search")
@@ -107,9 +86,8 @@ def find_bridges(H1: dict, H2: dict, template_index: dict,
                  min_bridge_tm: float,
                  self_filter_tm: float = None) -> list:
     """
-    Self-interaction filter: discard bridge (A, B) if P1 already carries
-    both an A-like AND a B-like domain, or if P2 does.
-    self_filter_tm defaults to min_bridge_tm when None.
+    Bridges where P1 or P2 already carries both domain types are discarded
+    (self_filter_tm defaults to min_bridge_tm).
     """
     sft = min_bridge_tm if self_filter_tm is None else self_filter_tm
     bridges = []
@@ -122,10 +100,8 @@ def find_bridges(H1: dict, H2: dict, template_index: dict,
             tm_b = H2.get(dom_b)
             if tm_b is None or tm_b < min_bridge_tm:
                 continue
-            # Self-interaction filter: P1 already has both A-like and B-like
             if H1.get(dom_b, -1.0) >= sft:
                 continue
-            # Self-interaction filter: P2 already has both A-like and B-like
             if H2.get(dom_a, -1.0) >= sft:
                 continue
             key = (dom_a, dom_b)
@@ -140,10 +116,8 @@ def find_bridges(H1: dict, H2: dict, template_index: dict,
             tm_a = H2.get(dom_a)
             if tm_a is None or tm_a < min_bridge_tm:
                 continue
-            # Self-interaction filter: P1 already has both B-like and A-like
             if H1.get(dom_a, -1.0) >= sft:
                 continue
-            # Self-interaction filter: P2 already has both A-like and B-like
             if H2.get(dom_b, -1.0) >= sft:
                 continue
             key = (dom_b, dom_a)
@@ -154,10 +128,6 @@ def find_bridges(H1: dict, H2: dict, template_index: dict,
     bridges.sort(key=lambda x: x[4], reverse=True)
     return bridges
 
-
-# ---------------------------------------------------------------------------
-# Report
-# ---------------------------------------------------------------------------
 
 def print_report(name1: str, name2: str, H1: dict, H2: dict,
                  bridges: list, min_bridge_tm: float, top_n: int = 5):
@@ -207,7 +177,6 @@ def print_report(name1: str, name2: str, H1: dict, H2: dict,
     print("  How to read the best bridge:")
     print(f"  - {name1} structurally resembles  {best[1]}")
     print(f"  - {name2} structurally resembles  {best[2]}")
-    # Extract the fusion protein accession from the domain name
     fusion = best[1].split("-")[1] if "-" in best[1] else best[1]
     print(f"  - Both domains co-occur in fusion protein  {fusion}  in TED")
     print(f"  - Evidence: since {fusion} carries both domain types naturally fused,")
@@ -216,16 +185,11 @@ def print_report(name1: str, name2: str, H1: dict, H2: dict,
     print()
 
 
-# ---------------------------------------------------------------------------
-# Main
-# ---------------------------------------------------------------------------
-
 def main():
     p = argparse.ArgumentParser(
         description="Predict PPI between two proteins using Rosetta Stone "
                     "paired-domain transfer.")
 
-    # Input: either PDB files (runs merizo) or UIDs (uses existing cache)
     grp = p.add_mutually_exclusive_group(required=True)
     grp.add_argument("--pdb1", help="PDB file for protein 1 (runs merizo search)")
     grp.add_argument("--uid1", help="UniProt ID for protein 1 (uses search cache)")
@@ -261,19 +225,16 @@ def main():
     p.add_argument("--top-bridges", type=int, default=5, dest="top_bridges")
     args = p.parse_args()
 
-    # Validate: uid2 must pair with uid1 (not pdb1), and vice versa
     if args.uid1 and args.pdb2:
         p.error("--uid1 must be paired with --uid2, not --pdb2")
     if args.pdb1 and args.uid2:
         p.error("--pdb1 must be paired with --pdb2, not --uid2")
 
-    # Load template index
     print(f"Loading template index from {args.template_index}...")
     with open(args.template_index) as fh:
         template_index = json.load(fh)
     print(f"  {len(template_index):,} domain entries loaded.")
 
-    # Get hits for each protein
     if args.uid1:
         name1, name2 = args.uid1, args.uid2
         print(f"\nLoading cached search results for {name1} and {name2}...")
@@ -297,14 +258,11 @@ def main():
         H2 = run_merizo_search(args.pdb2, args.zhang_db, args.topk, args.batchsize)
         print(f"  {len(H2)} template domain hits.")
 
-    # Score
     _sft = args.min_bridge_tm if args.self_filter_tm is None else args.self_filter_tm
     print(f"\nFinding bridges (min_bridge_tm={args.min_bridge_tm}, "
           f"self_filter_tm={_sft})...")
     bridges = find_bridges(H1, H2, template_index,
                            args.min_bridge_tm, args.self_filter_tm)
-
-    # Report
     print_report(name1, name2, H1, H2, bridges, args.min_bridge_tm, args.top_bridges)
 
 

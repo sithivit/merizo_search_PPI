@@ -1,9 +1,7 @@
 #!/usr/bin/env python3
 """
-rosetta_build_template_index.py
-
-Build a bidirectional template pair index from the TED pair list, restricted
-to pairs where at least one domain belongs to a Zhang benchmark protein.
+Build a bidirectional template pair index from the TED pair list, restricted to
+pairs where at least one domain belongs to a Zhang benchmark protein.
 Saves as JSON: {domain_name: [co-occurring domain names]}.
 
 Usage:
@@ -33,12 +31,8 @@ def load_zhang_domain_names(path: str) -> set:
 
 
 def build_index(pair_list_path: str, zhang_domains: set) -> dict:
-    """
-    Stream the TED pair list. For each pair (A, B) where at least one of A, B
-    is a Zhang benchmark domain, add A->B and B->A to the index.
-    Returns {domain_name: list_of_co_occurring_domains}.
-    """
-    index = {}  # domain -> set, converted to sorted list when saving
+    """Stream pair list; retain pairs where at least one domain is a Zhang domain. Returns bidirectional index."""
+    index = {}
     n_included = 0
     n_total = 0
 
@@ -59,7 +53,7 @@ def build_index(pair_list_path: str, zhang_domains: set) -> dict:
 
     log.info(f"Pair list: {n_total:,} lines, {n_included:,} pairs retained")
     log.info(f"Index: {len(index):,} unique domain entries")
-    return {k: sorted(v) for k, v in index.items()}  # sets -> sorted lists for JSON
+    return {k: sorted(v) for k, v in index.items()}
 
 
 def run(args):

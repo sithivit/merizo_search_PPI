@@ -49,19 +49,14 @@ def resolve(dbinfo, db_dir, key):
 
 
 def extract_domain(dbinfo, db_dir, domain_idx):
-    """
-    Pull name, sequence, and CA coords for one domain out of the database.
-    domain_idx is the index into the ORIGINAL 365M database.
-    """
+    """Return (name, sequence, CA_coords) for one domain by original-DB index."""
     idx_list = [domain_idx]
 
-    # --- name ---
     with open(resolve(dbinfo, db_dir, 'db_names_f'), 'rb') as f:
         mm = mmap.mmap(f.fileno(), 0, access=mmap.ACCESS_READ)
         names = retrieve_names_by_idx(idx=idx_list, mm=mm)
     name = names[0]
 
-    # --- sequence ---
     with open(resolve(dbinfo, db_dir, 'sif'), 'rb') as sif, \
          open(resolve(dbinfo, db_dir, 'sdf'), 'rb') as sdf:
         si_mm = mmap.mmap(sif.fileno(), 0, access=mmap.ACCESS_READ)
@@ -70,7 +65,6 @@ def extract_domain(dbinfo, db_dir, domain_idx):
         sequence = retrieve_bytes(startend[0][0], startend[0][1],
                                   mm=sd_mm, typeconv=lambda x: x.decode('ascii'))
 
-    # --- CA coordinates ---
     with open(resolve(dbinfo, db_dir, 'cif'), 'rb') as cif, \
          open(resolve(dbinfo, db_dir, 'cdf'), 'rb') as cdf:
         ci_mm = mmap.mmap(cif.fileno(), 0, access=mmap.ACCESS_READ)
@@ -83,10 +77,7 @@ def extract_domain(dbinfo, db_dir, domain_idx):
 
 
 def write_ca_pdb(coords, sequence, output_path):
-    """
-    Write a CA-only PDB.  Format matches Foldclass write_pdb() so that
-    read_pdb() can parse it back without issues.
-    """
+    """Write a CA-only PDB in Foldclass-compatible format."""
     assert len(coords) == len(sequence), \
         f"Coord/seq length mismatch: {len(coords)} vs {len(sequence)}"
 
@@ -100,28 +91,22 @@ def write_ca_pdb(coords, sequence, output_path):
 
 
 def find_index_by_name(target_name, dbinfo, db_dir):
-    """
-    Find a domain's original-DB index by name.
-    If INDEX_LIST_FILE exists (pairlist db), only those indices are checked.
-    """
+    """Find a domain's original-DB index by name, checking INDEX_LIST_FILE first if present."""
     names_path = resolve(dbinfo, db_dir, 'db_names_f')
 
     if 'INDEX_LIST_FILE' in dbinfo:
         index_list_path = os.path.join(db_dir, dbinfo['INDEX_LIST_FILE'])
         with open(index_list_path, 'r') as f:
             indices = [int(line.strip()) for line in f]
-
         print(f"  Scanning {len(indices)} pairlist indices for '{target_name}'...")
         with open(names_path, 'rb') as f:
             mm = mmap.mmap(f.fileno(), 0, access=mmap.ACCESS_READ)
             names = retrieve_names_by_idx(idx=indices, mm=mm)
-
         for name, orig_idx in zip(names, indices):
             if name == target_name:
                 return orig_idx
         return None
     else:
-        # Full database linear scan
         db_size = dbinfo['DB_SIZE']
         ENTRY_SIZE = 33
         print(f"  Linear scan of {db_size} entries...")

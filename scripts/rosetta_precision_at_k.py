@@ -1,13 +1,9 @@
 #!/usr/bin/env python3
 """
-rosetta_precision_at_k.py
-
-Computes two focused precision metrics on a pair_scores.tsv file:
-  1. Precision at top-k  (k = 50, 100, 200, 500, 1000)
-  2. Precision among non-zero-scoring pairs only
+Precision at top-k and among non-zero-scoring pairs for a pair_scores.tsv file.
 
 Usage:
-    python scripts/rosetta_precision_at_k.py \
+    python scripts/rosetta_precision_at_k.py \\
         --pair-scores benchmark_results_phase3_tm0.0/pair_scores.tsv
 """
 
@@ -41,7 +37,6 @@ def load_rows_with_proteins(path):
 
 
 def per_query_hits_at_1(rows_with_proteins):
-    """For each protein that has ≥1 positive pair, check if its top-scored pair is positive."""
     from collections import defaultdict
     protein_pairs = defaultdict(list)
     for pa, pb, score, is_pos in rows_with_proteins:
@@ -84,9 +79,9 @@ def run(args):
     n_pos = sum(1 for _, is_pos in rows if is_pos)
     n_neg = sum(1 for _, is_pos in rows if not is_pos)
     total = len(rows)
-    prior = n_pos / total  # random baseline for raw precision
+    prior = n_pos / total
 
-    # Shuffle first so ties are broken randomly (matches AUCPR evaluation)
+    # Shuffle first so ties are broken randomly (same as AUCPR evaluation)
     rng = random.Random(42)
     rng.shuffle(rows)
     rows_sorted = sorted(rows, key=lambda x: x[0], reverse=True)
@@ -100,7 +95,6 @@ def run(args):
     print(f"  Prior (random P@k)    : {prior:.4f}  ({prior*100:.2f}%)")
     print()
 
-    # ── Metric 1: Global Precision at top-k ─────────────────────────────
     print("Global Precision at top-k (raw, unweighted)")
     print("-" * 60)
     print(f"{'k':>8}  {'TP in top-k':>12}  {'Precision':>10}  {'vs random':>10}")
@@ -113,7 +107,6 @@ def run(args):
         print(f"{k:>8,}  {tp:>12,}  {prec:>10.4f}  {lift:>10.2f}×")
     print()
 
-    # ── Metric 2: Per-query Hits@1 ───────────────────────────────────────
     hit, miss, miss_unreachable, miss_outranked, no_positive = per_query_hits_at_1(rows_full)
     n_queries = hit + miss
     hits_at_1 = hit / n_queries if n_queries > 0 else 0.0
@@ -121,8 +114,7 @@ def run(args):
     n_reachable = hit + miss_outranked
     hits_at_1_reachable = hit / n_reachable if n_reachable > 0 else 0.0
 
-    print("Per-query Hits@1")
-    print("(For each protein with ≥1 positive pair: is its top-scored partner correct?)")
+    print("Per-query Hits@1 (is each protein's top-scored partner its true positive?)")
     print("-" * 60)
     print(f"  Query proteins with ≥1 positive pair : {n_queries:,}")
     print(f"  Proteins with no positive pair        : {no_positive:,}  (excluded)")
@@ -135,7 +127,6 @@ def run(args):
     print(f"  — reachable = positive partner has structural evidence (score > 0)")
     print()
 
-    # ── Metric 3: Precision among non-zero-scoring pairs ────────────────
     nonzero = [(s, is_pos) for s, is_pos in rows if s > 0.0]
     nz_total = len(nonzero)
     nz_pos = sum(1 for _, is_pos in nonzero if is_pos)

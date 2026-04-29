@@ -1,25 +1,11 @@
 #!/usr/bin/env python3
 """
-build_zhang_subdb.py
+Build a merizo search sub-database restricted to Zhang et al. benchmark proteins.
 
-Build a merizo search sub-database containing ONLY the proteins present in
-Zhang et al.'s positive-pair control set.
+Restricting to ~500-800 Zhang proteins ensures every topk slot is a verifiable
+hit, maximising recall within the benchmark universe.
 
-Why: searching against the full 5M-entry ted_pairlist means topk slots are
-consumed by proteins that are not in Zhang's dataset and cannot be verified.
-By restricting the target database to ~500-800 Zhang proteins, every topk slot
-is a verifiable hit and recall is maximised within the benchmark universe.
-
-Pipeline
---------
-  1. Extract unique protein IDs from Zhang positive pairs
-  2. Stream pair_list, keeping only entries whose protein is in the Zhang set
-  3. Write a filtered pair_list (zhang_pair_list.txt)
-  4. Call transform_pairlist_to_database to build the sub-database
-
-Usage
------
-    python scripts/build_zhang_subdb.py
+Usage:
     python scripts/build_zhang_subdb.py \\
         --controls benchmark_cache/benchmarks/positives_and_negatives.tsv \\
         --pair-list /mnt/bigstore/ted/pair_list_20250128 \\
@@ -56,10 +42,9 @@ _AF_RE = re.compile(r'AF-([^-]+)-F1-model_v4')
 
 
 def extract_zhang_proteins(controls_path: str) -> set:
-    """Return all unique protein IDs that appear in Zhang positive pairs."""
     proteins = set()
     with open(controls_path) as fh:
-        next(fh)  # skip header
+        next(fh)
         for line in fh:
             line = line.strip()
             if not line:
@@ -74,12 +59,7 @@ def extract_zhang_proteins(controls_path: str) -> set:
 
 def filter_pair_list(pair_list_path: str, zhang_proteins: set,
                      output_path: str) -> int:
-    """
-    Write a filtered pair_list containing only entries where the protein ID
-    (from Domain A) is in zhang_proteins.
-
-    Returns the number of lines written.
-    """
+    """Filter pair_list to entries whose Domain A protein is in zhang_proteins. Returns line count."""
     written = 0
     with open(pair_list_path) as src, open(output_path, "w") as dst:
         for line in src:
@@ -99,12 +79,10 @@ def filter_pair_list(pair_list_path: str, zhang_proteins: set,
 def run(args):
     os.makedirs(args.output_dir, exist_ok=True)
 
-    # Step 1 — extract Zhang protein IDs
     log.info("Extracting Zhang protein IDs from controls file...")
     zhang_proteins = extract_zhang_proteins(args.controls)
     log.info(f"  Unique proteins in Zhang positives: {len(zhang_proteins):,}")
 
-    # Step 2 — filter pair_list
     filtered_pair_list = os.path.join(args.output_dir, "zhang_pair_list.txt")
     log.info(f"Filtering pair_list to Zhang proteins → {filtered_pair_list}")
     n_lines = filter_pair_list(args.pair_list, zhang_proteins, filtered_pair_list)
@@ -114,7 +92,6 @@ def run(args):
         log.error("No entries written — check that pair_list protein IDs match Zhang controls.")
         sys.exit(1)
 
-    # Step 3 — build sub-database
     subdb_dir = os.path.join(args.output_dir, "zhang_pairlist_db")
     log.info(f"Building Zhang sub-database → {subdb_dir}")
     transform_pairlist_to_database.main(

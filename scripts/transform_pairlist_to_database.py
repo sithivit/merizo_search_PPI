@@ -13,8 +13,6 @@ import sys
 import os
 import json
 
-# Import local modules
-# Ensure we can import from the same directory
 sys.path.append(os.path.dirname(__file__))
 
 import extract_pairlist_domains
@@ -23,11 +21,7 @@ import create_pairlist_filter_db
 import create_pairlist_json
 
 def create_index_list(domain_to_idx, output_path):
-    """
-    Save sorted list of indices.
-
-    Output format: One index per line
-    """
+    """Save sorted list of database indices, one per line."""
     indices = sorted(domain_to_idx.values())
 
     with open(output_path, 'w') as f:
@@ -38,9 +32,6 @@ def create_index_list(domain_to_idx, output_path):
     return indices
 
 def main(pair_list_path, db_config_path, output_dir):
-    """
-    Complete transformation pipeline.
-    """
     os.makedirs(output_dir, exist_ok=True)
 
     print(f"=== Starting Transformation Pipeline ===")
@@ -55,11 +46,9 @@ def main(pair_list_path, db_config_path, output_dir):
     print("\nStep 2: Mapping domain IDs to database indices...")
     domain_to_idx = map_domains_to_indices.map_ids_to_indices(domain_ids, db_config_path)
     print(f"  Mapped {len(domain_to_idx)} domains")
-    
+
     if len(domain_to_idx) == 0:
         print("Warning: No domains were mapped. Check if pair list IDs match database names.")
-        # Proceeding anyway? Maybe allow creating empty DB?
-        # But indices list will be empty.
 
     print("\nStep 3: Creating index list file...")
     indices = create_index_list(
@@ -84,14 +73,13 @@ def main(pair_list_path, db_config_path, output_dir):
     print("\n=== Transformation complete! ===")
     print(f"  Output directory: {output_dir}")
     print(f"  Database size: {len(indices)} domains")
-    
-    # Calculate reduction if possible
+
     try:
         with open(db_config_path, 'r') as f:
             full_size = json.load(f).get('DB_SIZE', 1)
         if full_size > 0:
             print(f"  Reduction: {100 * (1 - len(indices) / full_size):.1f}%")
-    except:
+    except Exception:
         pass
 
 if __name__ == '__main__':

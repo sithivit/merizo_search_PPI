@@ -1,23 +1,10 @@
 #!/usr/bin/env python3
 """
-rosetta_search_ted365m.py
+Extend Phase 2 coverage to single-domain benchmark proteins using the full
+ted_365M database (which includes proteins absent from ted_pairlist_filters.db).
 
-Extend Phase 2 coverage to single-domain benchmark proteins by querying
-the full ted_365M database instead of the filtered ted_pairlist subset.
-
-The ted_pairlist_filters.db only indexes multi-domain proteins (those that
-appear in at least one intra-protein domain-domain pair). Single-domain
-proteins are absent. The full ted_365M database contains ALL TED-segmented
-AlphaFold domains, including single-domain proteins.
-
-This script:
-  1. Determines which benchmark proteins are still missing from the cache
-  2. Scans the ted_365M names file ONCE to find domain indices for all
-     missing proteins (33-byte fixed-width entries, linear scan)
-  3. Extracts each domain PDB from ted_365M using its integer index
-  4. Runs merizo search against the Zhang sub-DB
-  5. Saves results as: {output_dir}/{uid}_dom{NN}_search.tsv
-     (dom-suffixed to stay compatible with --multi-domain benchmark mode)
+Scans the names file once, extracts domain PDBs, runs merizo search against the
+Zhang sub-DB, and saves results as {output_dir}/{uid}_dom{NN}_search.tsv.
 
 Usage:
     python scripts/rosetta_search_ted365m.py \\
@@ -108,15 +95,7 @@ def has_sentinel(uid: str, search_cache_dir: str) -> bool:
 
 
 def scan_ted365m_for_proteins(target_proteins: set, db_json: str) -> dict:
-    """
-    Single linear scan of the ted_365M names file.
-
-    Domain names follow: AF-{uid}-F1-model_v4_TED{NN}
-    uid starts at byte 3, length 6. We extract it from each 33-byte entry
-    and check against target_proteins.
-
-    Returns: {uid: [(domain_name, domain_idx), ...]}
-    """
+    """Single linear scan of 33-byte fixed-width name entries. Returns {uid: [(name, idx)]}."""
     dbinfo = read_dbinfo(db_json)
     db_dir = os.path.dirname(os.path.abspath(db_json))
 
@@ -139,12 +118,10 @@ def scan_ted365m_for_proteins(target_proteins: set, db_json: str) -> dict:
         for idx in range(db_size):
             raw = mm[idx * ENTRY_SIZE: idx * ENTRY_SIZE + ENTRY_SIZE]
             name = raw.decode("utf-8", errors="ignore").rstrip("\x00").strip()
-            # Domain name format: AF-XXXXXX-F1-model_v4_TED01
-            # UniProt ID is at position 3..9
             if len(name) >= 9 and name.startswith("AF-"):
                 uid = name[3:9]
                 if uid in found:
-                    if not found[uid]:  # first domain for this protein
+                    if not found[uid]:
                         n_found_proteins += 1
                     found[uid].append((name, idx))
 
@@ -160,8 +137,6 @@ def scan_ted365m_for_proteins(target_proteins: set, db_json: str) -> dict:
     elapsed = time.time() - start
     log.info(f"Scan complete in {elapsed:.0f}s. "
              f"Found domains for {n_found_proteins:,} / {len(target_proteins):,} proteins.")
-
-    # Remove proteins with no domains found
     return {uid: domains for uid, domains in found.items() if domains}
 
 
@@ -276,17 +251,15 @@ def run(args):
         log.info("Nothing to do.")
         return
 
-    # Single scan of ted_365M to find all domain indices at once
     domain_map = scan_ted365m_for_proteins(set(missing), args.ted365m_db)
     log.info(f"Domains found for {len(domain_map):,} proteins in ted_365M")
 
-    # Write sentinels for proteins not found in ted_365M
     not_in_ted = [uid for uid in missing if uid not in domain_map]
     log.info(f"Not found in ted_365M (writing sentinels): {len(not_in_ted):,}")
     for uid in not_in_ted:
         open(os.path.join(args.search_cache_dir, f"{uid}_dom00_search.tsv"), "w").close()
 
-    todo = sorted(domain_map.items())  # [(uid, [(name, idx), ...]), ...]
+    todo = sorted(domain_map.items())
     total = len(todo)
     log.info(f"Running searches for {total:,} proteins with {args.workers} workers...")
 

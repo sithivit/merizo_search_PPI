@@ -1,19 +1,6 @@
 #!/usr/bin/env python3
 """
-rosetta_explain_pair.py
-
 Trace the Rosetta Stone scoring step-by-step for one protein pair.
-
-For the given P1 and P2, this script:
-  1. Shows the top search hits for each protein (their closest Zhang template domains)
-  2. Finds every bridging template pair (A in H[P1], B in H[P2] or vice versa)
-  3. Prints each bridge with its two TM scores and the min() score
-  4. Reports the final score = max over all bridges
-
-This confirms the algorithm is exactly what the professor described:
-  "A domain-domain association (A,B) observed in a fused protein transfers
-   evidence that any protein with an A-like domain interacts with any protein
-   with a B-like domain."
 
 Usage:
     python scripts/rosetta_explain_pair.py \\
@@ -21,13 +8,10 @@ Usage:
         --search-cache-dir benchmark_cache/searches \\
         --template-index benchmark_cache/zhang_template_index.json
 
-    # To find a good example pair (top-scoring positives in the cache):
-    python scripts/rosetta_explain_pair.py \\
-        --find-examples \\
+    python scripts/rosetta_explain_pair.py --find-examples \\
         --controls benchmark_cache/benchmarks/positives_and_negatives.tsv \\
         --search-cache-dir benchmark_cache/searches \\
-        --template-index benchmark_cache/zhang_template_index.json \\
-        --min-bridge-tm 0.5
+        --template-index benchmark_cache/zhang_template_index.json
 """
 
 import argparse
@@ -63,14 +47,8 @@ def parse_search_tsv(tsv_path: str, query_protein: str) -> dict:
 
 
 def load_hits(pid: str, cache_dir: str) -> dict:
-    """
-    Load and aggregate all search hits for a protein.
-    Supports both single-file ({pid}_search.tsv) and multi-domain
-    ({pid}_domNN_search.tsv) cache formats, taking max TM per template domain.
-    """
+    """Load and aggregate all search hits for a protein, supporting both single-file and multi-domain cache formats."""
     best = {}
-
-    # Multi-domain format: {pid}_domNN_search.tsv
     prefix = pid + "_dom"
     found_any = False
     for fname in sorted(os.listdir(cache_dir)):
@@ -87,7 +65,6 @@ def load_hits(pid: str, cache_dir: str) -> dict:
     if found_any:
         return best
 
-    # Single-file format: {pid}_search.tsv
     tsv = os.path.join(cache_dir, f"{pid}_search.tsv")
     if os.path.exists(tsv) and os.path.getsize(tsv) > 0:
         return parse_search_tsv(tsv, pid)
@@ -99,19 +76,14 @@ def find_bridges(H1: dict, H2: dict, template_index: dict,
                  min_bridge_tm: float = 0.0,
                  self_filter_tm: float = None) -> list:
     """
-    Return all (tm_a, domain_a, domain_b, tm_b, score, direction) tuples,
-    sorted by score descending.
-    direction = "forward" means A in H[P1], B in H[P2].
-
-    Self-interaction filter: a bridge (A, B) is discarded if P1 already
-    carries both an A-like AND a B-like domain, or if P2 does.
-    self_filter_tm defaults to min_bridge_tm when None.
+    Return (tm_a, dom_a, dom_b, tm_b, score, direction) tuples sorted by score desc.
+    Bridges where P1 or P2 already carries both domain types are discarded
+    (self_filter_tm defaults to min_bridge_tm).
     """
     sft = min_bridge_tm if self_filter_tm is None else self_filter_tm
     bridges = []
     seen = set()
 
-    # Forward: A in H1, B in H2
     for dom_a, tm_a in H1.items():
         if tm_a < min_bridge_tm:
             continue
@@ -122,10 +94,8 @@ def find_bridges(H1: dict, H2: dict, template_index: dict,
             tm_b = H2.get(dom_b)
             if tm_b is None or tm_b < min_bridge_tm:
                 continue
-            # Self-interaction filter: P1 already has both A-like and B-like
             if H1.get(dom_b, -1.0) >= sft:
                 continue
-            # Self-interaction filter: P2 already has both A-like and B-like
             if H2.get(dom_a, -1.0) >= sft:
                 continue
             key = (dom_a, dom_b)
@@ -134,7 +104,6 @@ def find_bridges(H1: dict, H2: dict, template_index: dict,
                 bridges.append((tm_a, dom_a, dom_b, tm_b,
                                 min(tm_a, tm_b), "forward"))
 
-    # Reverse: B in H1, A in H2
     for dom_b, tm_b in H1.items():
         if tm_b < min_bridge_tm:
             continue
@@ -145,10 +114,8 @@ def find_bridges(H1: dict, H2: dict, template_index: dict,
             tm_a = H2.get(dom_a)
             if tm_a is None or tm_a < min_bridge_tm:
                 continue
-            # Self-interaction filter: P1 already has both B-like and A-like
             if H1.get(dom_a, -1.0) >= sft:
                 continue
-            # Self-interaction filter: P2 already has both A-like and B-like
             if H2.get(dom_b, -1.0) >= sft:
                 continue
             key = (dom_b, dom_a)
@@ -235,7 +202,6 @@ def find_examples(controls: str, cache_dir: str, template_index: dict,
         if os.path.getsize(os.path.join(cache_dir, fname)) == 0:
             continue
         stem = fname[:-len("_search.tsv")]
-        # Multi-domain: {pid}_domNN  →  extract pid
         if "_dom" in stem:
             pid = stem.rsplit("_dom", 1)[0]
         else:

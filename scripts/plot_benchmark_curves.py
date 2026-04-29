@@ -1,21 +1,15 @@
 #!/usr/bin/env python3
 """
-plot_benchmark_curves.py
+Plot weighted precision-recall and ROC curves from pair_scores.tsv files.
 
-Generates two figures from one or more benchmark pair_scores.tsv files:
-  1. Weighted precision-recall curve (wp=0.01) with random baseline
-  2. ROC curve with random baseline diagonal
-
-Single input:
-    python scripts/plot_benchmark_curves.py \
-        --pair-scores benchmark_results_rosetta_phase2_final/pair_scores.tsv \
+Usage:
+    python scripts/plot_benchmark_curves.py \\
+        --pair-scores benchmark_results_rosetta_phase2_final/pair_scores.tsv \\
         --output-dir figures/
 
-Multiple inputs on the same plot (for comparison):
-    python scripts/plot_benchmark_curves.py \
-        --pair-scores benchmark_results_rosetta_phase2_final/pair_scores.tsv \
-        --labels "Phase 2 (multi-domain)" \
-        --output-dir figures/
+    python scripts/plot_benchmark_curves.py \\
+        --pair-scores a/pair_scores.tsv b/pair_scores.tsv \\
+        --labels "Run A" "Run B" --output-dir figures/
 """
 
 import argparse
@@ -107,7 +101,6 @@ def run(args):
 
     baseline_pr = args.wp / (args.wp + 1)
 
-    # ------------------------------------------------------------------ PR
     fig_pr, ax_pr = plt.subplots(figsize=(6, 5))
     ax_pr.axhline(baseline_pr, color="grey", linewidth=1.0, linestyle="--",
                   label=f"Random baseline ({baseline_pr:.4f})", zorder=1)
@@ -142,7 +135,6 @@ def run(args):
     plt.close(fig_pr)
     print(f"Saved: {pr_path}")
 
-    # ------------------------------------------------------------------ ROC
     fig_roc, ax_roc = plt.subplots(figsize=(6, 5))
     ax_roc.plot([0, 1], [0, 1], color="grey", linewidth=1.0, linestyle="--",
                 label="Random baseline (AUC = 0.5000)", zorder=1)

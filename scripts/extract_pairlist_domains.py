@@ -6,22 +6,15 @@ import sys
 from typing import Set
 
 def extract_domain_ids(pair_list_path: str) -> Set[str]:
-    """
-    Parse pair_list file and extract all unique domain IDs.
-
-    Input: pair_list_20250128
-    Output: Set of domain IDs
-    """
+    """Return all unique domain IDs from a TED pair list file."""
     domain_ids = set()
 
     try:
         with open(pair_list_path, 'r') as f:
             for line in f:
-                # Parse: DOMAIN1:DOMAIN2 SCORE1:SCORE2 PAE
                 parts = line.strip().split()
                 if len(parts) >= 1:
                     pair = parts[0]
-                    # Check if the line is a valid pair (contains :)
                     if ':' in pair:
                         domain1, domain2 = pair.split(':')
                         domain_ids.add(domain1)

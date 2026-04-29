@@ -1,22 +1,11 @@
 #!/usr/bin/env python3
 """
-rosetta_search_both_sides.py
+Search all TED domains of all Zhang benchmark proteins against the Zhang sub-database.
 
-Search ALL TED domains of ALL Zhang benchmark proteins against the Zhang
-sub-database. Needed for Phase 2 of the Rosetta Stone pipeline to include
-single-domain proteins (not in the existing pair-list cache).
+Results are cached as {output_dir}/{P}_dom{N:02d}_search.tsv. Failed extractions
+write empty sentinel files so re-runs skip them.
 
-For each protein P:
-  1. Query SQLite for all TED domain IDs and their binary indices.
-  2. Extract each domain PDB from the pairlist_db binary by integer index.
-  3. Search that domain against the Zhang sub-database.
-  4. Cache as: {output_dir}/{P}_dom{N:02d}_search.tsv
-
-If a domain's index is not in the pairlist_db (e.g. a single-domain protein
-absent from the pair list), extraction will fail gracefully and an empty
-cache file is written (so re-runs skip it).
-
-Usage (on UCL cluster, in a screen session):
+Usage:
     python scripts/rosetta_search_both_sides.py \\
         --controls benchmark_cache/benchmarks/positives_and_negatives.tsv \\
         --filter-db merizo_pairlist_db/ted_pairlist_filters.db \\
@@ -60,15 +49,7 @@ _AA_1TO3 = {
 
 
 def is_canonical_uniprot(uid: str) -> bool:
-    """
-    Return True only for canonical Swiss-Prot accessions (reviewed UniProt entries).
-    These are the only ones with AlphaFold structures in TED using the expected naming.
-    Canonical accessions are exactly 6 characters and follow one of two patterns:
-      [OPQ][0-9][A-Z0-9]{3}[0-9]   e.g. P07948, Q8WYA1, O75791
-      [A-NR-Z][0-9][A-Z][A-Z0-9]{2}[0-9]  e.g. A2BC19
-    Non-canonical (TrEMBL) accessions (A0A075B6H7, B7Z3J9, etc.) are longer or
-    follow different patterns and are not in the TED pairlist database.
-    """
+    """True only for canonical Swiss-Prot accessions (reviewed; have AlphaFold structures in TED)."""
     import re
     return bool(re.fullmatch(
         r'[OPQ][0-9][A-Z0-9]{3}[0-9]|[A-NR-Z][0-9][A-Z][A-Z0-9]{2}[0-9]',
@@ -77,11 +58,7 @@ def is_canonical_uniprot(uid: str) -> bool:
 
 
 def get_all_benchmark_proteins(controls_path: str) -> set:
-    """
-    All unique canonical proteins from both sides of ALL Zhang pairs.
-    Non-canonical accessions (TrEMBL isoforms etc.) are excluded — they have no
-    AlphaFold structures in TED and would all return no_domains_in_sqlite.
-    """
+    """All unique canonical proteins from both sides of all Zhang pairs."""
     proteins = set()
     skipped = 0
     with open(controls_path) as fh:
@@ -103,10 +80,7 @@ def get_all_benchmark_proteins(controls_path: str) -> set:
 
 
 def get_protein_domains(uid: str, filter_db_path: str) -> list:
-    """
-    Return [(domain_id, domain_idx), ...] for all TED domains of protein uid.
-    Queries the SQLite metadata database by UniProt accession pattern.
-    """
+    """Return [(domain_id, domain_idx), ...] for all TED domains of a protein."""
     conn = sqlite3.connect(filter_db_path)
     cursor = conn.cursor()
     pattern = f"AF-{uid}-F1-model_v4_TED%"
@@ -120,7 +94,6 @@ def get_protein_domains(uid: str, filter_db_path: str) -> list:
 
 
 def extract_domain_pdb(domain_idx: int, pairlist_db: str, output_pdb: str) -> bool:
-    """Extract a domain structure by integer index from the Foldclass binary DB."""
     try:
         db_json = pairlist_db + ".json"
         dbinfo = read_dbinfo(db_json)
@@ -223,9 +196,6 @@ def run(args):
     all_proteins = get_all_benchmark_proteins(args.controls)
     log.info(f"Total canonical proteins: {len(all_proteins):,}")
 
-    # A protein is "done" only if it has at least one non-empty domain search file.
-    # Per-domain files are checked individually inside process_protein, so a protein
-    # with partial results will resume from the first missing domain automatically.
     done = {fname.split("_dom")[0]
             for fname in os.listdir(args.output_dir)
             if fname.endswith("_search.tsv")
